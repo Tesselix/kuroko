@@ -1,0 +1,130 @@
+//! Tesselix build. One repo, one pinned Zig version (see build.zig.zon).
+//!
+//!   zig build test        all unit tests (any OS)
+//!   zig build run         the simulator: compositor + desktop + apps (needs SDL3)
+//!   zig build run-desk    the desktop-service stub (context hub)
+//!   zig build             everything
+
+const std = @import("std");
+const builtin = @import("builtin");
+
+// Tesselix is pinned to Zig 0.16.x for development (0.17 before production).
+// Other versions change the std APIs this code uses, so stop early with a
+// clear message instead of a page of API errors.
+comptime {
+    if (builtin.zig_version.major != 0 or builtin.zig_version.minor != 16) {
+        @compileError("Tesselix needs Zig 0.16.0, but this is Zig " ++ builtin.zig_version_string ++
+            ". Install 0.16.0 (brew install zig, or https://ziglang.org/download/) and put it first on your PATH.");
+    }
+}
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    // ReleaseSafe by default: it is how Tesselix ships (bounds and overflow
+    // checks stay on), and Debug is too slow to judge scrolling by feel.
+    // Use -Doptimize=Debug for debugging.
+    const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Optimization mode (default ReleaseSafe)") orelse .ReleaseSafe;
+
+    // ---------------------------------------------------------- modules
+
+    const core = b.addModule("txcore", .{
+        .root_source_file = b.path("txcore/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        // Sockets go through libc (see txcore/src/ipc.zig).
+        .link_libc = true,
+    });
+    const widgets = b.addModule("txwidgets", .{
+        .root_source_file = b.path("txwidgets/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "txcore", .module = core }},
+    });
+    const comp = b.addModule("txcomp", .{
+        .root_source_file = b.path("txcomp/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "txcore", .module = core },
+            .{ .name = "txwidgets", .module = widgets },
+        },
+    });
+    const controls = b.addModule("controls", .{
+        .root_source_file = b.path("apps/controls/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "txcore", .module = core },
+            .{ .name = "txwidgets", .module = widgets },
+        },
+    });
+
+    // ------------------------------------------------------------ tests
+
+    const test_step = b.step("test", "Run all unit tests");
+    const headless = b.createModule(.{
+        .root_source_file = b.path("tools/txsim/src/headless_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "txcore", .module = core },
+            .{ .name = "txwidgets", .module = widgets },
+            .{ .name = "txcomp", .module = comp },
+            .{ .name = "controls", .module = controls },
+        },
+    });
+    for ([_]*std.Build.Module{ core, widgets, comp, controls, headless }) |m| {
+        const t = b.addTest(.{ .root_module = m });
+        test_step.dependOn(&b.addRunArtifact(t).step);
+    }
+
+    // --------------------------------------------------- desktop service
+
+    const desk = b.addExecutable(.{
+        .name = "txdesk",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("txdesk/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "txcore", .module = core }},
+        }),
+    });
+    b.installArtifact(desk);
+    const run_desk = b.addRunArtifact(desk);
+    b.step("run-desk", "Run the desktop-service stub").dependOn(&run_desk.step);
+
+    // ------------------------------------------------------- simulator
+
+    const no_sim = b.option(bool, "no-sim", "Skip the SDL3 simulator") orelse false;
+    if (!no_sim) {
+        const sim_mod = b.createModule(.{
+            .root_source_file = b.path("tools/txsim/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "txcore", .module = core },
+                .{ .name = "txwidgets", .module = widgets },
+                .{ .name = "txcomp", .module = comp },
+                .{ .name = "controls", .module = controls },
+            },
+        });
+        // SDL3 is declared by hand in tools/txsim/src/sdl.zig (no C headers
+        // needed); only the library is linked. Homebrew on Apple Silicon in
+        // case pkg-config is missing.
+        if (target.result.os.tag == .macos) {
+            for ([_][]const u8{ "/opt/homebrew", "/usr/local" }) |prefix| {
+                const lib = b.fmt("{s}/lib", .{prefix});
+                std.Io.Dir.accessAbsolute(b.graph.io, b.fmt("{s}/libSDL3.dylib", .{lib}), .{}) catch continue;
+                sim_mod.addLibraryPath(.{ .cwd_relative = lib });
+                break;
+            }
+        }
+        sim_mod.linkSystemLibrary("SDL3", .{});
+        const sim = b.addExecutable(.{ .name = "txsim", .root_module = sim_mod });
+        b.installArtifact(sim);
+        const run_sim = b.addRunArtifact(sim);
+        if (b.args) |args| run_sim.addArgs(args);
+        b.step("run", "Run the simulator (compositor + desktop + apps)").dependOn(&run_sim.step);
+    }
+}

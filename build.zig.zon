@@ -1,0 +1,20 @@
+.{
+    .name = .tesselix,
+    .version = "0.0.1",
+    .fingerprint = 0xa6daa4b5494c32,
+    // Latest solid Zig (docs/dependencies.md); 0.17 is solid from 2027-01-04.
+    // Upgrade deliberately, together with docs/zig-notes.md.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "txcore",
+        "txcomp",
+        "txdesk",
+        "txwidgets",
+        "txdk",
+        "apps",
+        "tools",
+    },
+}
