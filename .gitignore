@@ -2,3 +2,4 @@
 zig-out/
 *.ppm
 .DS_Store
+ubuntu-share/
