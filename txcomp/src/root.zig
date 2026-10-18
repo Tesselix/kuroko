@@ -10,6 +10,7 @@ pub const compositor = @import("compositor.zig");
 pub const Compositor = compositor.Compositor;
 pub const AppEntry = compositor.AppEntry;
 pub const Params = compositor.Params;
+pub const FramePace = compositor.FramePace;
 
 test {
     @import("std").testing.refAllDecls(@This());

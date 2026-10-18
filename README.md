@@ -32,8 +32,9 @@ Only the Linux backend (wlroots) needs the VM.
 
 ```sh
 zig build test          # all unit tests
-zig build run           # the simulator: compositor + desktop + Controls and Scroll Lab
-zig build run -- --empty --dark
+zig build run           # the simulator: a clean desktop; Controls, Scroll Lab and Notes wait in the panel
+zig build run -- --tiled   # all five apps open on the desktop
+zig build run -- --empty --dark   # nothing started, dark theme
 zig build run-desk      # in a second terminal: the desktop service prints the scene
 ```
 
@@ -79,8 +80,11 @@ CodeLLDB (`vadimcn.vscode-lldb`, needed for Run and Debug).
 ## Running on the Ubuntu ARM VM
 
 The VM (Ubuntu Server 26.04 ARM, 3D acceleration) shares `ubuntu-share/`
-with the Mac. Tesselix runs there full screen on the bare console: the
-simulator draws through SDL3's KMS/DRM driver, so no X or Wayland is needed.
+with the Mac. Tesselix runs there full screen from the bare console: the
+simulator runs inside `cage`, a minimal Wayland kiosk. SDL3's own KMS/DRM
+driver cannot be used in UTM (it shows ARGB8888 frames; the virtio-gpu
+screen plane takes only XRGB8888), so `run.sh` uses cage until Tesselix has
+its own Linux backend.
 
 On the Mac, in this folder:
 
@@ -98,12 +102,17 @@ read-only at `/mnt/shared` (`make ubuntu VM_SHARE=...` if it is elsewhere):
 sh /mnt/shared/tesselix/check.sh   # is the VM ready? (changes nothing)
 sh /mnt/shared/tesselix/setup.sh   # once: libSDL3, Mesa, kmscube, video/render/input groups
 sh /mnt/shared/tesselix/run.sh     # the compositor, desktop and apps, full screen
-sh /mnt/shared/tesselix/run.sh --dark --empty   # txsim options pass through
+sh /mnt/shared/tesselix/run.sh --dark --tiled   # txsim options pass through (--empty, --tiled, --dark)
 ```
 
 `run.sh` also starts the desktop service in the background (its log is
-`~/.cache/tesselix/txdesk.log`). Ctrl+C in the terminal quits. Running it
-over SSH works too; the picture appears on the VM's screen.
+`~/.cache/tesselix/txdesk.log`; the simulator's is `txsim.log`). Start it
+from the VM's console, logged in as yourself: cage needs the console's seat.
+To quit, run `pkill txsim` over SSH (it prints a timing summary to the log); `pkill -9 txsim` if it hangs.
+
+If the shared folder shows the Mac's owner (uid 501, group 20) and you cannot
+read it, copy it to your home folder first and run from there:
+`sudo cp -r /mnt/shared/tesselix ~/tesselix && sudo chown -R $USER: ~/tesselix`.
 
 Cross-compiling needs no SDL3 for the target on the Mac: the build links
 against a stub with the same names (`tools/txsim/src/sdl_stub.zig`), and the

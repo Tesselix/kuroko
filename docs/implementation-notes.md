@@ -56,12 +56,20 @@ touches. Change the code and this file together.
 
 ## Animation over slow frames
 
-- A frame more than 40 ms after the previous one is a stall (for example apps
-  redrawing at a new size on a HiDPI screen). Running compositor animations
-  (window moves, flights to and from the panel, the travel outline, flashes,
+- A stall is a frame that comes much later than the machine's usual pace:
+  over 40 ms and over 2.5x the usual gap between frames (for example apps
+  redrawing at a new size on a HiDPI screen). The usual gap is learned while
+  drawing continuously (`FramePace`; gaps over 100 ms are idle time and do
+  not count), so a slower machine (the VM, a software renderer) animates in
+  real time with fewer frames instead of in slow motion.
+- Compositor animations that were running at the previous frame (window
+  moves, flights to and from the panel, the travel outline, flashes,
   closing, full-screen zoom, space slides) are held for the stall, so they
-  play from where they were instead of jumping to the end.
-  `Compositor.holdOverStall`.
+  play from where they were instead of jumping to the end. Animations that
+  started after the previous frame (by the input that ended an idle pause)
+  are never held. `Compositor.holdOverStall`.
+- The simulator reports the real frame rate on exit ("frame interval");
+  SIGINT/SIGTERM end it cleanly with that summary.
 
 ## Ubuntu ARM VM
 
@@ -70,9 +78,14 @@ touches. Change the code and this file together.
   `libSDL3.so.0`) because the Mac has no SDL3 for the target; a test keeps
   the stub in step with `sdl.zig`. At run time the VM's real libSDL3 is
   loaded.
-- On the VM, SDL3's KMS/DRM driver shows Tesselix full screen on the bare
-  console (`--fullscreen`, `SDL_VIDEODRIVER=kmsdrm`). This is still the
-  simulator backend; the wlroots backend comes later.
+- On the VM the simulator runs inside `cage` (Wayland kiosk, wlroots) with
+  `SDL_VIDEODRIVER=wayland`, `WLR_RENDERER=gles2`. SDL3's KMS/DRM driver does
+  not work in UTM: it scans out ARGB8888 framebuffers, and the virtio-gpu
+  primary plane accepts only XRGB8888 (the commit fails, the console stays on
+  screen). wlroots' Vulkan renderer finds only llvmpipe there. SDL's desktop
+  OpenGL renderer needs GLSL 1.30 that virgl does not offer, so the renderer
+  is `opengles2` (then `software`). The full-screen window takes the
+  display's exact size. Tesselix's own Linux backend replaces all this.
 
 ## Known limits
 

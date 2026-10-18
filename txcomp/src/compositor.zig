@@ -301,8 +301,8 @@ pub const Compositor = struct {
     ghosts: std.ArrayList(Ghost) = .empty,
     /// The last click on a title bar, to see a double click.
     last_title: ?struct { h: Handle, t: i64, x: f32, y: f32 } = null,
-    /// Time of the previous frame, to see a slow one.
-    last_frame: i64 = -1,
+    /// Frame timing, to tell a slow frame (stall) from the usual pace.
+    pace: FramePace = .{},
     launch_seq: u64 = 0,
     /// "Close all" asks for a second click; the time of the first.
     close_all_armed: ?i64 = null,
@@ -430,6 +430,32 @@ pub const Compositor = struct {
         self.relayout(now, true);
         self.publishWindow(h, .opened);
         return h;
+    }
+
+    /// Launches an app straight into the panel, as at login: the app
+    /// starts and its window waits minimized, so the desktop stays clean.
+    /// Nothing animates and focus does not change.
+    pub fn launchMinimized(self: *Compositor, app: usize, now: i64) !Handle {
+        const entry = self.apps[app];
+        const expected = self.stats[app].expected() orelse @as(i64, @max(entry.start_ms, 400)) * ms;
+        self.launch_seq += 1;
+        const h = try self.windows.create(.{
+            .app = app,
+            .seq = self.launch_seq,
+            .launch_start = now,
+            .ready_at = now + @as(i64, entry.start_ms) * ms,
+            .expected_ns = expected,
+            .shelved = true,
+        });
+        try self.shelf.append(self.gpa, h);
+        self.relayout(now, false);
+        self.publishWindow(h, .opened);
+        return h;
+    }
+
+    /// Windows on screen and in the panel (for tests and scripts).
+    pub fn counts(self: *const Compositor) struct { tiled: usize, shelved: usize } {
+        return .{ .tiled = self.tiles.items.len, .shelved = self.shelf.items.len };
     }
 
     fn attachSurface(self: *Compositor, h: Handle, now: i64) void {
@@ -1398,11 +1424,12 @@ pub const Compositor = struct {
         return @intCast(@max(1, @divTrunc(room + cell_gap, cell_w + cell_gap)));
     }
 
-    /// A cell of the preview at full size. One window: as before, by its
-    /// shape, from the thumbnail. Several: a grid that starts at the
-    /// thumbnail and grows to the right, then down.
+    /// A cell of the preview at full size. One window: by its shape, right
+    /// of the panel, level with its thumbnail, so the panel's other
+    /// thumbnails stay visible and reachable. Several: a grid right of the
+    /// panel that grows to the right, then down.
     fn previewCellFull(self: *Compositor, p: *const Preview, i: usize) Rect {
-        const x0 = p.anchor.x - 6;
+        const x0 = shell.panel_w + 12;
         if (p.n == 1) {
             const g = self.windows.acquire(p.items[0]);
             const aspect: f32 = blk: {
@@ -2658,18 +2685,20 @@ pub const Compositor = struct {
     }
 
     /// A slow frame (apps redrawing at a new size, many pixels on a HiDPI
-    /// screen) must not eat the animations: running ones are held for the
-    /// stall, so they play from where they were instead of jumping to the
-    /// end. Frames are expected every 16 ms; anything over 40 ms is a stall.
+    /// screen) must not eat the animations: the ones that were running at
+    /// the previous frame are held for the stall, so they play from where
+    /// they were instead of jumping to the end. What counts as a stall is
+    /// relative to the machine's usual frame pace (FramePace), so a slower
+    /// machine still animates in real time, with fewer frames. Animations
+    /// that started after the previous frame (by the input that ended an
+    /// idle pause) are never held.
     fn holdOverStall(self: *Compositor, now: i64) void {
-        defer self.last_frame = now;
-        if (self.last_frame < 0) return;
-        const gap = now - self.last_frame;
-        if (gap <= 40 * ms) return;
-        const shift = gap - 16 * ms;
+        const stall = self.pace.frame(now) orelse return;
+        const since = stall.since;
+        const shift = stall.shift;
         const hold = struct {
-            fn f(start: *i64, now_: i64, dur: i64, sh: i64) void {
-                if (start.* >= 0 and now_ - start.* < dur + sh) start.* += sh;
+            fn f(start: *i64, now_: i64, dur: i64, since_: i64, sh: i64) void {
+                if (start.* >= 0 and start.* <= since_ and now_ - start.* < dur + sh) start.* += sh;
             }
         }.f;
         var hs: std.ArrayList(Handle) = .empty;
@@ -2679,14 +2708,14 @@ pub const Compositor = struct {
             const g = self.windows.acquire(h) orelse continue;
             defer g.release();
             const w = g.ptr;
-            if (w.placed) hold(&w.anim_start, now, anim_ms * ms, shift);
-            hold(&w.fly_start, now, fly_ms * ms, shift);
-            hold(&w.fs_start, now, space_ms * ms, shift);
-            hold(&w.flash_start, now, flash_ms * ms, shift);
+            if (w.placed) hold(&w.anim_start, now, anim_ms * ms, since, shift);
+            hold(&w.fly_start, now, fly_ms * ms, since, shift);
+            hold(&w.fs_start, now, space_ms * ms, since, shift);
+            hold(&w.flash_start, now, flash_ms * ms, since, shift);
         }
-        if (self.cue) |*c| hold(&c.start, now, cue_ms * ms, shift);
-        for (self.ghosts.items) |*gh| hold(&gh.start, now, fly_ms * ms, shift);
-        hold(&self.space_start, now, space_ms * ms, shift);
+        if (self.cue) |*c| hold(&c.start, now, cue_ms * ms, since, shift);
+        for (self.ghosts.items) |*gh| hold(&gh.start, now, fly_ms * ms, since, shift);
+        hold(&self.space_start, now, space_ms * ms, since, shift);
     }
 
     fn fsZooming(self: *Compositor, h: Handle, now: i64) bool {
@@ -3030,3 +3059,92 @@ pub const Compositor = struct {
         self.publisher.sendSnapshot(self.scratch.items);
     }
 };
+
+/// Frame pacing: learns the usual time between frames while the screen is
+/// being drawn continuously, and reports a frame that came much later than
+/// that (a stall). A fast machine draws every 16 ms; a slow one (a VM, a
+/// software renderer) may draw every 50 ms, and that is its pace, not a
+/// stall. Gaps longer than `idle_gap` are idle time (nothing to draw) and
+/// do not change the pace.
+pub const FramePace = struct {
+    /// Time of the previous frame, or -1 before the first.
+    last: i64 = -1,
+    /// Usual time between frames.
+    usual: i64 = 16 * ms,
+
+    pub const idle_gap = 100 * ms;
+    /// A frame is a stall when it is over 40 ms and over 2.5x the usual gap.
+    pub const min_stall = 40 * ms;
+
+    pub const Stall = struct {
+        /// Time of the frame before the stall: animations running then
+        /// are the ones to hold.
+        since: i64,
+        /// How long to hold them.
+        shift: i64,
+    };
+
+    pub fn frame(self: *FramePace, now: i64) ?Stall {
+        defer self.last = now;
+        if (self.last < 0) return null;
+        const gap = now - self.last;
+        const usual = self.usual;
+        if (gap <= idle_gap) self.usual += @divTrunc(gap - self.usual, 8);
+        if (gap <= min_stall or gap * 2 <= usual * 5) return null;
+        return .{ .since = self.last, .shift = gap - usual };
+    }
+};
+
+test "FramePace: steady 60 Hz has no stalls" {
+    var p: FramePace = .{};
+    var t: i64 = 0;
+    for (0..120) |_| {
+        try std.testing.expect(p.frame(t) == null);
+        t += 16 * ms;
+    }
+}
+
+test "FramePace: one slow frame at 60 Hz is a stall" {
+    var p: FramePace = .{};
+    var t: i64 = 0;
+    for (0..60) |_| {
+        _ = p.frame(t);
+        t += 16 * ms;
+    }
+    const before = t - 16 * ms;
+    t += 104 * ms; // this frame comes 120 ms after the previous one
+    const s = p.frame(t) orelse return error.NoStall;
+    try std.testing.expectEqual(before, s.since);
+    try std.testing.expect(s.shift > 100 * ms and s.shift < 106 * ms);
+}
+
+test "FramePace: a slow machine's steady pace stops counting as stalls" {
+    var p: FramePace = .{};
+    var t: i64 = 0;
+    var stalls: usize = 0;
+    for (0..60) |i| {
+        if (p.frame(t) != null) {
+            stalls += 1;
+            try std.testing.expect(i < 6); // only while it learns the pace
+        }
+        t += 60 * ms;
+    }
+    try std.testing.expect(p.usual > 55 * ms and p.usual <= 60 * ms);
+    try std.testing.expect(stalls <= 5);
+}
+
+test "FramePace: an idle pause does not change the pace" {
+    var p: FramePace = .{};
+    var t: i64 = 0;
+    for (0..60) |_| {
+        _ = p.frame(t);
+        t += 16 * ms;
+    }
+    const usual = p.usual;
+    t += 3000 * ms;
+    const s = p.frame(t) orelse return error.NoStall;
+    try std.testing.expectEqual(usual, p.usual);
+    // Only animations already running before the pause are held; one that
+    // starts with the input that ended the pause (after `since`) is not.
+    try std.testing.expect(t - 1 * ms > s.since);
+}

@@ -423,3 +423,41 @@ test "every open app is in the panel; clicking one on screen brings it forward" 
     try std.testing.expectEqual(@as(usize, 2), comp.tiles.items.len);
     try std.testing.expectEqual(@as(usize, 0), comp.shelf.items.len);
 }
+
+test "login start: apps launch into the panel, the desktop stays clean" {
+    const gpa = std.testing.allocator;
+    const w = 1920;
+    const h = 1200;
+    const px = try gpa.alloc(u32, w * h);
+    defer gpa.free(px);
+
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = w, .h = h }, 1, .{});
+    defer comp.deinit();
+
+    var now: i64 = 0;
+    var hs: [3]core.Handle = undefined;
+    for ([_]usize{ 0, 1, 3 }, 0..) |a, i| hs[i] = try comp.launchMinimized(a, now);
+    try std.testing.expectEqual(@as(usize, 0), comp.counts().tiled);
+    try std.testing.expectEqual(@as(usize, 3), comp.counts().shelved);
+
+    // The apps start in the background (Scroll Lab takes 1.2 s) while the
+    // panel shows them; nothing comes onto the desktop by itself.
+    var cv = tw.Canvas.init(px, w, h, w, 1);
+    for (0..120) |_| {
+        now += 16 * ms;
+        _ = comp.tick(now);
+        comp.render(&cv, now);
+    }
+    try std.testing.expectEqual(@as(usize, 0), comp.counts().tiled);
+    try std.testing.expectEqual(@as(usize, 3), comp.counts().shelved);
+
+    // Restoring one from the panel tiles it.
+    comp.restore(hs[1], now);
+    for (0..30) |_| {
+        now += 16 * ms;
+        _ = comp.tick(now);
+        comp.render(&cv, now);
+    }
+    try std.testing.expectEqual(@as(usize, 1), comp.counts().tiled);
+    try std.testing.expectEqual(@as(usize, 2), comp.counts().shelved);
+}

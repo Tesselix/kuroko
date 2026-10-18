@@ -8,9 +8,12 @@
 
 export fn SDL_GetPrimaryDisplay() void {}
 export fn SDL_GetDisplayUsableBounds() void {}
+export fn SDL_GetDisplayBounds() void {}
 export fn SDL_Init() void {}
 export fn SDL_Quit() void {}
 export fn SDL_GetError() void {}
+export fn SDL_GetCurrentVideoDriver() void {}
+export fn SDL_GetRendererName() void {}
 export fn SDL_CreateWindow() void {}
 export fn SDL_DestroyWindow() void {}
 export fn SDL_GetWindowSize() void {}

@@ -6,8 +6,10 @@
 //! input events and shows the canvas the core draws. All behavior lives in
 //! txcomp and txwidgets, so it is the same code that will run on Linux.
 //!
-//!   zig build run                    start with Controls and Scroll Lab
-//!   zig build run -- --empty         start with an empty desktop
+//!   zig build run                    clean desktop; Controls, Scroll Lab
+//!                                    and Notes start minimized in the panel
+//!   zig build run -- --tiled         all five apps open on the desktop
+//!   zig build run -- --empty         nothing started
 //!   zig build run -- --dark          dark theme
 //!   zig build run -- --size 1280x800
 //!
@@ -24,6 +26,16 @@ const c = @import("sdl.zig");
 
 const ms = std.time.ns_per_ms;
 
+// SIGINT and SIGTERM (Ctrl+C, `pkill txsim`) end the run cleanly: the loop
+// stops, the timing summary is printed, and the process exits.
+var quit_signal = std.atomic.Value(bool).init(false);
+fn onQuitSignal(_: c_int) callconv(.c) void {
+    quit_signal.store(true, .monotonic);
+}
+extern "c" fn signal(sig: c_int, handler: *const fn (c_int) callconv(.c) void) ?*const anyopaque;
+const SIGINT: c_int = 2;
+const SIGTERM: c_int = 15;
+
 const apps = [_]txcomp.AppEntry{
     .{ .name = "Controls", .app_id = "org.tesselix.controls", .start_ms = 300, .create = controls.createControls },
     .{ .name = "Scroll Lab", .app_id = "org.tesselix.scroll-lab", .start_ms = 1200, .create = controls.createScrollLab },
@@ -35,6 +47,8 @@ const apps = [_]txcomp.AppEntry{
 const Options = struct {
     dark: bool = false,
     empty: bool = false,
+    /// All five apps open on the desktop (the old start).
+    tiled: bool = false,
     w: i32 = 1440,
     h: i32 = 900,
     snapshot: ?[]const u8 = null,
@@ -49,7 +63,7 @@ fn parseArgs(args: []const [:0]const u8) !Options {
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
-        if (std.mem.eql(u8, a, "--fullscreen")) o.fullscreen = true else if (std.mem.eql(u8, a, "--dark")) o.dark = true else if (std.mem.eql(u8, a, "--empty")) o.empty = true else if (std.mem.eql(u8, a, "--size") and i + 1 < args.len) {
+        if (std.mem.eql(u8, a, "--fullscreen")) o.fullscreen = true else if (std.mem.eql(u8, a, "--dark")) o.dark = true else if (std.mem.eql(u8, a, "--empty")) o.empty = true else if (std.mem.eql(u8, a, "--tiled")) o.tiled = true else if (std.mem.eql(u8, a, "--size") and i + 1 < args.len) {
             i += 1;
             var it = std.mem.splitScalar(u8, args[i], 'x');
             o.w = try std.fmt.parseInt(i32, it.next() orelse "1440", 10);
@@ -186,6 +200,12 @@ const Screen = struct {
         return true;
     }
 };
+
+fn sdlFailed(what: []const u8, count: *u32) void {
+    count.* += 1;
+    if (count.* <= 8) std.log.err("{s} failed: {s}", .{ what, c.SDL_GetError() });
+    if (count.* == 8) std.log.err("(further SDL errors are not shown)", .{});
+}
 
 fn clockText(buf: []u8) []const u8 {
     const t = c.time(null);
@@ -432,11 +452,24 @@ pub fn main(init: std.process.Init) !void {
         return error.Sdl;
     }
     defer c.SDL_Quit();
+    // After SDL_Init, so these replace SDL's own handlers.
+    _ = signal(SIGINT, &onQuitSignal);
+    _ = signal(SIGTERM, &onQuitSignal);
     // The window must fit on the screen, or the bottom of the panel (the
     // apps button) is cut off. Scripted runs keep their size.
     var win_w = opts.w;
     var win_h = opts.h;
-    if (!opts.size_given and opts.snapshot == null) {
+    if (opts.fullscreen and !opts.size_given and opts.snapshot == null) {
+        // Full screen (the VM's console): exactly the display's current
+        // mode. A smaller window makes SDL's KMS/DRM driver pick another
+        // mode (1280x768 on a 1280x800 screen), which the VM's virtio-gpu
+        // never shows: the console stays on screen.
+        var full: c.Rect = undefined;
+        if (c.SDL_GetDisplayBounds(c.SDL_GetPrimaryDisplay(), &full)) {
+            win_w = full.w;
+            win_h = full.h;
+        }
+    } else if (!opts.size_given and opts.snapshot == null) {
         var usable: c.Rect = undefined;
         if (c.SDL_GetDisplayUsableBounds(c.SDL_GetPrimaryDisplay(), &usable)) {
             // Room for the window's own title bar.
@@ -454,21 +487,36 @@ pub fn main(init: std.process.Init) !void {
         return error.Sdl;
     };
     defer c.SDL_DestroyRenderer(renderer);
-    _ = c.SDL_SetRenderVSync(renderer, 1);
+    if (!c.SDL_SetRenderVSync(renderer, 1)) std.log.warn("SDL_SetRenderVSync: {s}", .{c.SDL_GetError()});
 
     var screen: Screen = .{};
     defer gpa.free(screen.pixels);
     _ = try screen.update(gpa, window, renderer);
+    std.log.info("SDL video driver {s}, renderer {s}, window {d}x{d} (pixels {d}x{d}, scale {d})", .{
+        c.SDL_GetCurrentVideoDriver() orelse "?", c.SDL_GetRendererName(renderer) orelse "?",
+        screen.lw, screen.lh, screen.pw, screen.ph, screen.scale,
+    });
+    // Render calls that fail are reported (a few times), not ignored: on a
+    // new backend a failing present leaves the screen blank without a word.
+    var sdl_errors: u32 = 0;
+    var presented: u64 = 0;
 
     const clock = Clock{ .io = io, .start = std.Io.Timestamp.now(io, .awake) };
 
     const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = screen.lw, .h = screen.lh }, screen.scale, .{ .dark = opts.dark });
     defer comp.deinit();
-    if (!opts.empty) {
+    if (opts.empty) {
+        // Nothing started.
+    } else if (opts.tiled or opts.snapshot != null) {
         // Three growable windows (Scroll Lab, Notes, Reader) and two small
         // ones (Controls, Stopwatch). Four fit on a screen; the least
-        // recently used goes to the panel.
+        // recently used goes to the panel. Scripted runs start this way.
         for ([_]usize{ 2, 4, 3, 1, 0 }) |a| _ = try comp.launch(a, clock.now());
+    } else {
+        // As after login: a clean desktop, with Controls, Scroll Lab and
+        // Notes started and waiting in the panel. The others are in the
+        // launcher.
+        for ([_]usize{ 0, 1, 3 }) |a| _ = try comp.launchMinimized(a, clock.now());
     }
 
     // Same order as core.input.Cursor.
@@ -488,6 +536,10 @@ pub fn main(init: std.process.Init) !void {
     // Timing instrumentation: frame time and input-to-present latency.
     var frame_hist: core.metrics.Histogram = .{};
     var latency_hist: core.metrics.Histogram = .{};
+    // Time between presented frames while drawing continuously: the real
+    // frame rate (idle pauses are left out).
+    var interval_hist: core.metrics.Histogram = .{};
+    var last_present: i64 = -1;
     var pending_input: ?i64 = null;
 
     const sc = script(opts.script);
@@ -497,6 +549,7 @@ pub fn main(init: std.process.Init) !void {
     var running = true;
 
     while (running) {
+        if (quit_signal.load(.monotonic)) break;
         var ev: c.Event = undefined;
         // Scripted runs poll, so steps fire on time.
         const timeout: i32 = if (need or opts.snapshot != null) 1 else 250;
@@ -535,11 +588,17 @@ pub fn main(init: std.process.Init) !void {
             const t0 = clock.now();
             var cv = tw.Canvas.init(screen.pixels, screen.pw, screen.ph, screen.pw, screen.scale);
             comp.render(&cv, now);
-            _ = c.SDL_UpdateTexture(screen.texture.?, null, screen.pixels.ptr, screen.pw * 4);
-            _ = c.SDL_RenderClear(renderer);
-            _ = c.SDL_RenderTexture(renderer, screen.texture.?, null, null);
+            if (!c.SDL_UpdateTexture(screen.texture.?, null, screen.pixels.ptr, screen.pw * 4)) sdlFailed("SDL_UpdateTexture", &sdl_errors);
+            if (!c.SDL_RenderClear(renderer)) sdlFailed("SDL_RenderClear", &sdl_errors);
+            if (!c.SDL_RenderTexture(renderer, screen.texture.?, null, null)) sdlFailed("SDL_RenderTexture", &sdl_errors);
             const t1 = clock.now();
-            _ = c.SDL_RenderPresent(renderer);
+            if (c.SDL_RenderPresent(renderer)) {
+                presented += 1;
+                const tp = clock.now();
+                if (last_present >= 0 and tp - last_present <= txcomp.FramePace.idle_gap) interval_hist.record(tp - last_present);
+                last_present = tp;
+                if (presented == 1) std.log.info("first frame presented", .{});
+            } else sdlFailed("SDL_RenderPresent", &sdl_errors);
             frame_hist.record(t1 - t0);
             if (pending_input) |t| latency_hist.record(clock.now() - t);
             pending_input = null;
@@ -558,5 +617,9 @@ pub fn main(init: std.process.Init) !void {
 
     std.debug.print("\n-- timing --\n", .{});
     frame_hist.print("frame build (core render + upload)");
+    interval_hist.print("frame interval (while drawing)");
     latency_hist.print("input to present");
+    // Stopped by a signal: leave now. Tearing down SDL inside a Wayland
+    // kiosk (cage) can hang, and the OS frees everything anyway.
+    if (quit_signal.load(.monotonic)) std.process.exit(0);
 }

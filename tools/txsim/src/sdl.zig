@@ -16,6 +16,7 @@ pub const FRect = extern struct { x: f32, y: f32, w: f32, h: f32 };
 pub const Rect = extern struct { x: c_int, y: c_int, w: c_int, h: c_int };
 pub extern "c" fn SDL_GetPrimaryDisplay() u32;
 pub extern "c" fn SDL_GetDisplayUsableBounds(display: u32, rect: *Rect) bool;
+pub extern "c" fn SDL_GetDisplayBounds(display: u32, rect: *Rect) bool;
 
 // ------------------------------------------------------------- events
 
@@ -182,6 +183,8 @@ pub const SystemCursor = enum(c_int) {
 pub extern "c" fn SDL_Init(flags: u32) bool;
 pub extern "c" fn SDL_Quit() void;
 pub extern "c" fn SDL_GetError() [*:0]const u8;
+pub extern "c" fn SDL_GetCurrentVideoDriver() ?[*:0]const u8;
+pub extern "c" fn SDL_GetRendererName(r: *Renderer) ?[*:0]const u8;
 pub extern "c" fn SDL_CreateWindow(title: [*:0]const u8, w: c_int, h: c_int, flags: u64) ?*Window;
 pub extern "c" fn SDL_DestroyWindow(w: *Window) void;
 pub extern "c" fn SDL_GetWindowSize(w: *Window, width: *c_int, height: *c_int) bool;
