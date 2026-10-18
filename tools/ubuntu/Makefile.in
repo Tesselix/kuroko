@@ -1,26 +1,44 @@
 # Shortcuts around `zig build`. The build itself lives in build.zig.
-# To use it: cp tools/ubuntu/Makefile.in Makefile
+# The root Makefile is a copy of tools/ubuntu/Makefile.in:  cp tools/ubuntu/Makefile.in Makefile
 #
-#   make ubuntu      build for the Ubuntu ARM VM into ubuntu-share/tesselix
-#   make test        all unit tests
-#   make run         the simulator on this machine
+#   make test            all unit tests (on the Mac)
+#   make run             the simulator on the Mac
+#   make ubuntu          build for the Ubuntu ARM VM into ubuntu-share/tesselix
+#   make ubuntu OPTIMIZE=Debug    the same, as a Debug build
+#   make vm              print the commands to run on the VM
+#   make clean-ubuntu    remove the VM build from ubuntu-share
 #
-# On the VM, from the shared folder:   sh tesselix/run.sh
+# ubuntu-share/ is the UTM shared folder; the VM mounts it (read-only) at
+# VM_SHARE. On the VM:
+#
+#   sh /mnt/shared/tesselix/check.sh     before the first run: is the VM ready?
+#   sh /mnt/shared/tesselix/setup.sh     once: libSDL3, Mesa, groups
+#   sh /mnt/shared/tesselix/run.sh       Tesselix full screen on the VM's screen
 
-SHARE  ?= ubuntu-share
-TARGET ?= aarch64-linux-gnu
-OUT    := $(SHARE)/tesselix
+SHARE    ?= ubuntu-share
+VM_SHARE ?= /mnt/shared
+TARGET   ?= aarch64-linux-gnu
+OPTIMIZE ?= ReleaseSafe
+OUT      := $(SHARE)/tesselix
 
-.PHONY: ubuntu test run clean-ubuntu
+.PHONY: all test run ubuntu vm clean-ubuntu
 
-ubuntu:
-	SHARE=$(SHARE) TARGET=$(TARGET) sh tools/ubuntu/build.sh
+all: test
 
 test:
 	zig build test --summary all
 
 run:
 	zig build run
+
+ubuntu:
+	SHARE=$(SHARE) VM_SHARE=$(VM_SHARE) TARGET=$(TARGET) OPTIMIZE=$(OPTIMIZE) sh tools/ubuntu/build.sh
+
+vm:
+	@echo "On the VM (shared folder at $(VM_SHARE)):"
+	@echo "  sh $(VM_SHARE)/tesselix/check.sh"
+	@echo "  sh $(VM_SHARE)/tesselix/setup.sh     (once)"
+	@echo "  sh $(VM_SHARE)/tesselix/run.sh"
 
 clean-ubuntu:
 	rm -rf $(OUT)

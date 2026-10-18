@@ -85,18 +85,21 @@ simulator draws through SDL3's KMS/DRM driver, so no X or Wayland is needed.
 On the Mac, in this folder:
 
 ```sh
-sh tools/ubuntu/build.sh    # builds aarch64-linux into ubuntu-share/tesselix
+make ubuntu                  # builds aarch64-linux into ubuntu-share/tesselix
+make ubuntu OPTIMIZE=Debug   # a Debug build
+make vm                      # prints the commands for the VM
 ```
 
-On the VM, from the shared folder (wherever it is mounted):
+(`make ubuntu` runs `tools/ubuntu/build.sh`; the root `Makefile` is a copy of
+`tools/ubuntu/Makefile.in`: `cp tools/ubuntu/Makefile.in Makefile` once.) On the VM the share is mounted
+read-only at `/mnt/shared` (`make ubuntu VM_SHARE=...` if it is elsewhere):
 
 ```sh
-sh tesselix/setup.sh     # once: installs libSDL3, adds you to video/render/input
-sh tesselix/run.sh       # the compositor, desktop and apps, full screen
-sh tesselix/run.sh --dark --empty   # txsim options pass through
+sh /mnt/shared/tesselix/check.sh   # is the VM ready? (changes nothing)
+sh /mnt/shared/tesselix/setup.sh   # once: libSDL3, Mesa, kmscube, video/render/input groups
+sh /mnt/shared/tesselix/run.sh     # the compositor, desktop and apps, full screen
+sh /mnt/shared/tesselix/run.sh --dark --empty   # txsim options pass through
 ```
-
-(For `make ubuntu`, copy `tools/ubuntu/Makefile.in` to `Makefile` once.)
 
 `run.sh` also starts the desktop service in the background (its log is
 `~/.cache/tesselix/txdesk.log`). Ctrl+C in the terminal quits. Running it
