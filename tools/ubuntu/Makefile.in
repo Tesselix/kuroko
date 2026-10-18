@@ -1,0 +1,26 @@
+# Shortcuts around `zig build`. The build itself lives in build.zig.
+# To use it: cp tools/ubuntu/Makefile.in Makefile
+#
+#   make ubuntu      build for the Ubuntu ARM VM into ubuntu-share/tesselix
+#   make test        all unit tests
+#   make run         the simulator on this machine
+#
+# On the VM, from the shared folder:   sh tesselix/run.sh
+
+SHARE  ?= ubuntu-share
+TARGET ?= aarch64-linux-gnu
+OUT    := $(SHARE)/tesselix
+
+.PHONY: ubuntu test run clean-ubuntu
+
+ubuntu:
+	SHARE=$(SHARE) TARGET=$(TARGET) sh tools/ubuntu/build.sh
+
+test:
+	zig build test --summary all
+
+run:
+	zig build run
+
+clean-ubuntu:
+	rm -rf $(OUT)

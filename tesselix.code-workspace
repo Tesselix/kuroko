@@ -50,6 +50,14 @@
 				}
 			},
 			{
+				"label": "Build for Ubuntu VM",
+				"detail": "aarch64-linux into ubuntu-share/tesselix",
+				"type": "shell",
+				"command": "sh tools/ubuntu/build.sh",
+				"group": "build",
+				"problemMatcher": []
+			},
+			{
 				"label": "Test",
 				"detail": "zig build test",
 				"type": "shell",

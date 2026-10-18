@@ -39,6 +39,8 @@ const Options = struct {
     h: i32 = 900,
     snapshot: ?[]const u8 = null,
     size_given: bool = false,
+    /// The whole screen (the Ubuntu VM, with SDL's KMS/DRM driver).
+    fullscreen: bool = false,
     script: []const u8 = "default",
 };
 
@@ -47,7 +49,7 @@ fn parseArgs(args: []const [:0]const u8) !Options {
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
-        if (std.mem.eql(u8, a, "--dark")) o.dark = true else if (std.mem.eql(u8, a, "--empty")) o.empty = true else if (std.mem.eql(u8, a, "--size") and i + 1 < args.len) {
+        if (std.mem.eql(u8, a, "--fullscreen")) o.fullscreen = true else if (std.mem.eql(u8, a, "--dark")) o.dark = true else if (std.mem.eql(u8, a, "--empty")) o.empty = true else if (std.mem.eql(u8, a, "--size") and i + 1 < args.len) {
             i += 1;
             var it = std.mem.splitScalar(u8, args[i], 'x');
             o.w = try std.fmt.parseInt(i32, it.next() orelse "1440", 10);
@@ -442,7 +444,7 @@ pub fn main(init: std.process.Init) !void {
             win_h = @min(win_h, usable.h - 40);
         }
     }
-    const window = c.SDL_CreateWindow("Tesselix (simulator)", win_w, win_h, c.WINDOW_RESIZABLE | c.WINDOW_HIGH_PIXEL_DENSITY) orelse {
+    const window = c.SDL_CreateWindow("Tesselix (simulator)", win_w, win_h, c.WINDOW_RESIZABLE | c.WINDOW_HIGH_PIXEL_DENSITY | (if (opts.fullscreen) c.WINDOW_FULLSCREEN else 0)) orelse {
         std.log.err("SDL_CreateWindow: {s}", .{c.SDL_GetError()});
         return error.Sdl;
     };

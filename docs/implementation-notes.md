@@ -63,6 +63,17 @@ touches. Change the code and this file together.
   play from where they were instead of jumping to the end.
   `Compositor.holdOverStall`.
 
+## Ubuntu ARM VM
+
+- `tools/ubuntu/build.sh` (or `make ubuntu` with `tools/ubuntu/Makefile.in`) cross-compiles for `aarch64-linux-gnu`. The simulator links
+  against a stub libSDL3 (`tools/txsim/src/sdl_stub.zig`, soname
+  `libSDL3.so.0`) because the Mac has no SDL3 for the target; a test keeps
+  the stub in step with `sdl.zig`. At run time the VM's real libSDL3 is
+  loaded.
+- On the VM, SDL3's KMS/DRM driver shows Tesselix full screen on the bare
+  console (`--fullscreen`, `SDL_VIDEODRIVER=kmsdrm`). This is still the
+  simulator backend; the wlroots backend comes later.
+
 ## Known limits
 
 - The gear and the control center open the same small panel of switches for now.

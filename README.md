@@ -76,6 +76,36 @@ CodeLLDB (`vadimcn.vscode-lldb`, needed for Run and Debug).
   and the same run variants without a debugger. Compile errors appear in the
   Problems panel.
 
+## Running on the Ubuntu ARM VM
+
+The VM (Ubuntu Server 26.04 ARM, 3D acceleration) shares `ubuntu-share/`
+with the Mac. Tesselix runs there full screen on the bare console: the
+simulator draws through SDL3's KMS/DRM driver, so no X or Wayland is needed.
+
+On the Mac, in this folder:
+
+```sh
+sh tools/ubuntu/build.sh    # builds aarch64-linux into ubuntu-share/tesselix
+```
+
+On the VM, from the shared folder (wherever it is mounted):
+
+```sh
+sh tesselix/setup.sh     # once: installs libSDL3, adds you to video/render/input
+sh tesselix/run.sh       # the compositor, desktop and apps, full screen
+sh tesselix/run.sh --dark --empty   # txsim options pass through
+```
+
+(For `make ubuntu`, copy `tools/ubuntu/Makefile.in` to `Makefile` once.)
+
+`run.sh` also starts the desktop service in the background (its log is
+`~/.cache/tesselix/txdesk.log`). Ctrl+C in the terminal quits. Running it
+over SSH works too; the picture appears on the VM's screen.
+
+Cross-compiling needs no SDL3 for the target on the Mac: the build links
+against a stub with the same names (`tools/txsim/src/sdl_stub.zig`), and the
+VM's own `libSDL3.so.0` is used at run time.
+
 ## Linux (later)
 
 The compositor's Linux backend uses wlroots. The `zig-wlroots` bindings

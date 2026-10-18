@@ -161,6 +161,7 @@ pub const BUTTON_RIGHT: u8 = 3;
 // ------------------------------------------------------------ setup
 
 pub const INIT_VIDEO: u32 = 0x20;
+pub const WINDOW_FULLSCREEN: u64 = 0x1;
 pub const WINDOW_RESIZABLE: u64 = 0x20;
 pub const WINDOW_HIGH_PIXEL_DENSITY: u64 = 0x2000;
 pub const PIXELFORMAT_ARGB8888: u32 = 0x16362004;

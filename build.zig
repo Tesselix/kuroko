@@ -4,6 +4,9 @@
 //!   zig build run         the simulator: compositor + desktop + apps (needs SDL3)
 //!   zig build run-desk    the desktop-service stub (context hub)
 //!   zig build             everything
+//!
+//! For the Ubuntu ARM VM (from the Mac): `sh tools/ubuntu/build.sh`, which runs
+//!   zig build -Dtarget=aarch64-linux-gnu --prefix ubuntu-share/tesselix
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -73,7 +76,12 @@ pub fn build(b: *std.Build) void {
             .{ .name = "controls", .module = controls },
         },
     });
-    for ([_]*std.Build.Module{ core, widgets, comp, controls, headless }) |m| {
+    const stub_test = b.createModule(.{
+        .root_source_file = b.path("tools/txsim/src/sdl_stub.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    for ([_]*std.Build.Module{ core, widgets, comp, controls, headless, stub_test }) |m| {
         const t = b.addTest(.{ .root_module = m });
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
@@ -120,7 +128,29 @@ pub fn build(b: *std.Build) void {
                 break;
             }
         }
-        sim_mod.linkSystemLibrary("SDL3", .{});
+        // Cross-compiling (the Mac building for the Ubuntu ARM VM): there
+        // is no libSDL3 for the target here, so link against a stub that
+        // only carries the names and the soname libSDL3.so.0. The target's
+        // real libSDL3 is used at run time.
+        const cross = target.result.os.tag != builtin.os.tag or target.result.cpu.arch != builtin.cpu.arch;
+        const use_stub = b.option(bool, "sdl-stub", "Link SDL3 through a stub (default when cross-compiling)") orelse cross;
+        if (use_stub) {
+            const stub = b.addLibrary(.{
+                .linkage = .dynamic,
+                .name = "SDL3",
+                .version = .{ .major = 0, .minor = 0, .patch = 0 },
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("tools/txsim/src/sdl_stub.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                }),
+            });
+            // By path, not linkLibrary: no build-cache RUNPATH in the binary.
+            sim_mod.addLibraryPath(stub.getEmittedBinDirectory());
+            sim_mod.linkSystemLibrary("SDL3", .{ .use_pkg_config = .no });
+        } else {
+            sim_mod.linkSystemLibrary("SDL3", .{});
+        }
         const sim = b.addExecutable(.{ .name = "txsim", .root_module = sim_mod });
         b.installArtifact(sim);
         const run_sim = b.addRunArtifact(sim);
