@@ -1,0 +1,96 @@
+#!/bin/sh
+# Runs a third-party app, Google Chrome, on the VM's screen the same way
+# run.sh runs Tesselix: inside cage, as a Wayland client. It checks that the
+# VM can run a heavy GPU app before Tesselix hosts such apps itself (txsim is
+# not a Wayland server yet, so Chrome cannot open inside Tesselix).
+#
+#   sh browser.sh --install   once: Chrome from Google's apt repository
+#                             (arm64 builds; apt, never snap). Updates come
+#                             with  sudo apt upgrade
+#   sh browser.sh             Chrome full screen; any options pass through.
+#                             With Tesselix running (run.sh), it joins that
+#                             cage and shows over Tesselix (works over SSH)
+#   sh browser.sh https://example.org
+#
+#   TX_GPU=off sh browser.sh  draw on the CPU, if the GPU path shows nothing
+#   TX_MODE=2560x1600 sh browser.sh   screen size, as in run.sh
+#
+# Run it from the VM's console (cage needs the console's seat).
+# Seen on UTM (virgl) with Chrome 156: EGL refuses an ES 3.0 context, so
+# the GPU process exits and Chrome draws on the CPU; pages still render.
+#
+# Quit: Ctrl+Shift+Q, or from SSH  pkill -f 'opt/google/chrom[e]/chrome'
+#       (cage exits with it when browser.sh started cage).
+# Log: ~/.cache/tesselix/browser.log
+set -e
+cache="$HOME/.cache/tesselix"
+mkdir -p "$cache"
+
+if [ "$1" = --install ]; then
+    # Google's signing key and repository (the same files the .deb's own
+    # cron job writes), then the package.
+    keyring=/etc/apt/keyrings/google-chrome.gpg
+    sudo install -d -m 755 /etc/apt/keyrings
+    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+        | gpg --dearmor | sudo tee "$keyring" >/dev/null
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=$keyring] https://dl.google.com/linux/chrome/deb/ stable main" \
+        | sudo tee /etc/apt/sources.list.d/google-chrome.list >/dev/null
+    sudo apt-get update
+    sudo apt-get install -y google-chrome-stable
+    echo
+    echo "Done. Run:  sh $0"
+    exit 0
+fi
+
+browser=google-chrome-stable
+if ! command -v "$browser" >/dev/null; then
+    echo "Chrome is missing: run  sh $0 --install  first." >&2
+    exit 1
+fi
+if [ -z "$XDG_RUNTIME_DIR" ] && [ -d "/run/user/$(id -u)" ]; then
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+fi
+# Wayland directly (no XWayland), and no first-run dialogs.
+set -- --ozone-platform=wayland --no-first-run --no-default-browser-check "$@"
+if [ "$TX_GPU" = off ]; then
+    set -- --disable-gpu "$@"
+fi
+log="$cache/browser.log"
+
+# Tesselix already on screen (run.sh): join its cage. Chrome shows full
+# screen over Tesselix, and closing it brings Tesselix back. Works over SSH.
+if pgrep -x cage >/dev/null && [ -S "$XDG_RUNTIME_DIR/wayland-0" ]; then
+    echo "== $(date '+%F %T')  joining the running cage  args: $*" >"$log"
+    WAYLAND_DISPLAY=wayland-0 nohup "$browser" "$@" >>"$log" 2>&1 &
+    echo "Chrome started on the running cage (log: $log)."
+    exit 0
+fi
+
+if ! command -v cage >/dev/null; then
+    echo "cage is missing: run  sh $(dirname "$0")/setup.sh  first." >&2
+    exit 1
+fi
+
+# The same cage settings as run.sh (see the reasons there).
+export WLR_RENDERER="${TX_WLR_RENDERER:-gles2}"
+export WLR_NO_HARDWARE_CURSORS=1
+TX_MODE="${TX_MODE-1920x1200}"
+if [ -n "$TX_MODE" ] && ! command -v wlr-randr >/dev/null; then
+    echo "wlr-randr is missing, so the screen stays at the VM's size: sudo apt install wlr-randr" >&2
+    TX_MODE=""
+fi
+export TX_MODE
+
+echo "== $(date '+%F %T')  mode=${TX_MODE:-default}  gpu=${TX_GPU:-on}  args: $*" >"$log"
+status=0
+cage -- sh -c '
+    if [ -n "$TX_MODE" ]; then
+        out=$(wlr-randr | head -n1 | cut -d" " -f1)
+        wlr-randr --output "$out" --mode "$TX_MODE" \
+            && echo "screen: $out at $TX_MODE" \
+            || echo "screen: could not set $TX_MODE on $out"
+    fi
+    exec "$0" "$@"' "$browser" "$@" >>"$log" 2>&1 || status=$?
+echo "== $browser exited with status $status" >>"$log"
+tail -n 20 "$log"
+exit $status

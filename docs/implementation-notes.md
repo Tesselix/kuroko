@@ -87,6 +87,41 @@ touches. Change the code and this file together.
   is `opengles2` (then `software`). The full-screen window takes the
   display's exact size. Tesselix's own Linux backend replaces all this.
 
+## App registry (txdesk)
+
+- `txdesk apps scan` keeps `~/.local/state/tesselix/apps.tslx` (Tesselix
+  records `0x05xx`; `txcore/src/types.zig`): the apps, every file the
+  scanner has looked at with its size, mtime and inode, and the search
+  paths. txdesk is the only writer; a temporary file is renamed over the
+  old one. Code in `txdesk/src/apps/`.
+- Order: known apps are `stat`ed (gone: ghost; changed: version read
+  again); the search paths are walked, skipping known files, inspecting new
+  ones; then desktop entries not seen before name and describe the apps.
+  On the VM the first scan takes about 0.35 s, a rescan about 7 ms.
+- "Graphical" means: the binary calls a window-creating function
+  (XCreateWindow, gtk_window_new, SDL_CreateWindow, ...) or carries the
+  `xdg_wm_base` interface name, or a desktop entry a launcher shows names
+  it. Linking a display library alone is a display client (xrandr). Data
+  is searched for `xdg_wm_base` only in binaries that link a display
+  library or that a desktop entry names. X11-only apps are left out unless
+  `--x11`. Display servers (Xwayland, cage) are never apps.
+- Known false positive: `gtk-builder-tool` (a window only in one
+  subcommand). The planned Apps tool sets per-file overrides
+  (`always_skip`, `always_app`), which the scanner never changes.
+- A shell wrapper is followed through its last `exec` line;
+  `"$VAR/name"` is taken relative to the script's folder (Chrome's
+  `exec -a "$0" "$HERE/chrome"`). Scripts in other languages are found
+  only through desktop entries.
+- A ghost is revived when a new graphical binary has the same file name
+  and, when both are known, the same package; only an unambiguous match.
+- Packages: dpkg's `info/*.list` and `status`, read directly (merged /usr:
+  `/bin/x` and `/usr/bin/x` both tried); snap and Flatpak by path. snap and
+  flatpak themselves are not app keys: their apps are keyed by the path
+  that names them (`/snap/bin/chromium`).
+- Hidden desktop entries that only carry another id (Chrome's
+  `com.google.Chrome.desktop`, `NoDisplay=true`) are not read yet; the
+  compositor will need them to match a window's Wayland app id.
+
 ## Known limits
 
 - The gear and the control center open the same small panel of switches for now.

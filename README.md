@@ -32,9 +32,10 @@ Only the Linux backend (wlroots) needs the VM.
 
 ```sh
 zig build test          # all unit tests
-zig build run           # the simulator: a clean desktop; Controls, Scroll Lab and Notes wait in the panel
+zig build run           # the simulator: a clean desktop, nothing started; the apps are in the launcher
+zig build run -- --panel   # Controls, Scroll Lab and Notes wait in the panel
 zig build run -- --tiled   # all five apps open on the desktop
-zig build run -- --empty --dark   # nothing started, dark theme
+zig build run -- --dark    # dark theme
 zig build run-desk      # in a second terminal: the desktop service prints the scene
 ```
 
@@ -68,7 +69,7 @@ CodeLLDB (`vadimcn.vscode-lldb`, needed for Run and Debug).
 
 - **Run and Debug** (Cmd+Shift+D): pick a configuration, then F5 to debug or
   Ctrl+F5 to run without the debugger. Each builds first.
-  - *Tesselix*, *Tesselix (dark)*, *Tesselix (empty desktop)*
+  - *Tesselix*, *Tesselix (dark)*, *Tesselix (apps in the panel)*
   - *Tesselix (script)*: plays a scripted session you pick, then stays open
   - *Tesselix (Debug build)*: a Debug build in `zig-out/debug`, for stepping
     through code
@@ -102,7 +103,16 @@ read-only at `/mnt/shared` (`make ubuntu VM_SHARE=...` if it is elsewhere):
 sh /mnt/shared/tesselix/check.sh   # is the VM ready? (changes nothing)
 sh /mnt/shared/tesselix/setup.sh   # once: libSDL3, Mesa, kmscube, video/render/input groups
 sh /mnt/shared/tesselix/run.sh     # the compositor, desktop and apps, full screen
-sh /mnt/shared/tesselix/run.sh --dark --tiled   # txsim options pass through (--empty, --tiled, --dark)
+sh /mnt/shared/tesselix/run.sh --dark --tiled   # txsim options pass through (--panel, --tiled, --dark)
+```
+
+A third-party app for comparison, Google Chrome, runs the same way (in cage, full
+screen; Tesselix cannot host outside apps until it is a Wayland server):
+
+```sh
+sh /mnt/shared/tesselix/browser.sh --install   # once, from Google's apt repository (arm64)
+sh /mnt/shared/tesselix/browser.sh             # quit with Ctrl+Shift+Q; joins a running Tesselix
+TX_GPU=off sh /mnt/shared/tesselix/browser.sh  # CPU drawing, if the screen stays blank
 ```
 
 `run.sh` also starts the desktop service in the background (its log is

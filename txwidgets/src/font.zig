@@ -32,16 +32,16 @@ const pixel_sizes = [_]u16{ 11, 13, 15, 20, 22, 26, 30, 40 };
 
 const files = struct {
     const regular = [_][]const u8{
-        @embedFile("fonts/regular-11.txf"), @embedFile("fonts/regular-13.txf"),
-        @embedFile("fonts/regular-15.txf"), @embedFile("fonts/regular-20.txf"),
-        @embedFile("fonts/regular-22.txf"), @embedFile("fonts/regular-26.txf"),
-        @embedFile("fonts/regular-30.txf"), @embedFile("fonts/regular-40.txf"),
+        @embedFile("fonts/regular-11.tslx"), @embedFile("fonts/regular-13.tslx"),
+        @embedFile("fonts/regular-15.tslx"), @embedFile("fonts/regular-20.tslx"),
+        @embedFile("fonts/regular-22.tslx"), @embedFile("fonts/regular-26.tslx"),
+        @embedFile("fonts/regular-30.tslx"), @embedFile("fonts/regular-40.tslx"),
     };
     const semibold = [_][]const u8{
-        @embedFile("fonts/semibold-11.txf"), @embedFile("fonts/semibold-13.txf"),
-        @embedFile("fonts/semibold-15.txf"), @embedFile("fonts/semibold-20.txf"),
-        @embedFile("fonts/semibold-22.txf"), @embedFile("fonts/semibold-26.txf"),
-        @embedFile("fonts/semibold-30.txf"), @embedFile("fonts/semibold-40.txf"),
+        @embedFile("fonts/semibold-11.tslx"), @embedFile("fonts/semibold-13.tslx"),
+        @embedFile("fonts/semibold-15.tslx"), @embedFile("fonts/semibold-20.tslx"),
+        @embedFile("fonts/semibold-22.tslx"), @embedFile("fonts/semibold-26.tslx"),
+        @embedFile("fonts/semibold-30.tslx"), @embedFile("fonts/semibold-40.tslx"),
     };
 };
 

@@ -20,8 +20,8 @@ out="$share/tesselix"
 
 cd "$root"
 zig build -Dtarget="$target" -Doptimize="$optimize" --prefix "$out"
-cp tools/ubuntu/run.sh tools/ubuntu/setup.sh tools/ubuntu/check.sh "$out/"
-chmod +x "$out/run.sh" "$out/setup.sh" "$out/check.sh" "$out/bin/"*
+cp tools/ubuntu/run.sh tools/ubuntu/setup.sh tools/ubuntu/check.sh tools/ubuntu/browser.sh "$out/"
+chmod +x "$out/run.sh" "$out/setup.sh" "$out/check.sh" "$out/browser.sh" "$out/bin/"*
 echo
 echo "Built for $target ($optimize) in $out. On the VM:"
 echo "  sh $vm_share/tesselix/check.sh"

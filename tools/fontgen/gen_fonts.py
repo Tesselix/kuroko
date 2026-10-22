@@ -79,8 +79,8 @@ def main() -> None:
     for name, path, weight in (("regular", regular, 400), ("semibold", semibold, 600)):
         for px in SIZES:
             data = build(path, weight, px)
-            (out / f"{name}-{px}.txf").write_bytes(data)
-            print(f"{name}-{px}.txf {len(data)} bytes")
+            (out / f"{name}-{px}.tslx").write_bytes(data)
+            print(f"{name}-{px}.tslx {len(data)} bytes")
 
 
 if __name__ == "__main__":

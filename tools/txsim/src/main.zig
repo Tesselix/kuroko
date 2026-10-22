@@ -6,10 +6,11 @@
 //! input events and shows the canvas the core draws. All behavior lives in
 //! txcomp and txwidgets, so it is the same code that will run on Linux.
 //!
-//!   zig build run                    clean desktop; Controls, Scroll Lab
-//!                                    and Notes start minimized in the panel
+//!   zig build run                    clean desktop, nothing started; the
+//!                                    apps wait in the launcher
+//!   zig build run -- --panel         Controls, Scroll Lab and Notes start
+//!                                    minimized in the panel
 //!   zig build run -- --tiled         all five apps open on the desktop
-//!   zig build run -- --empty         nothing started
 //!   zig build run -- --dark          dark theme
 //!   zig build run -- --size 1280x800
 //!
@@ -46,8 +47,9 @@ const apps = [_]txcomp.AppEntry{
 
 const Options = struct {
     dark: bool = false,
-    empty: bool = false,
-    /// All five apps open on the desktop (the old start).
+    /// Controls, Scroll Lab and Notes start minimized in the panel.
+    panel: bool = false,
+    /// All five apps open on the desktop.
     tiled: bool = false,
     w: i32 = 1440,
     h: i32 = 900,
@@ -63,7 +65,7 @@ fn parseArgs(args: []const [:0]const u8) !Options {
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
-        if (std.mem.eql(u8, a, "--fullscreen")) o.fullscreen = true else if (std.mem.eql(u8, a, "--dark")) o.dark = true else if (std.mem.eql(u8, a, "--empty")) o.empty = true else if (std.mem.eql(u8, a, "--tiled")) o.tiled = true else if (std.mem.eql(u8, a, "--size") and i + 1 < args.len) {
+        if (std.mem.eql(u8, a, "--fullscreen")) o.fullscreen = true else if (std.mem.eql(u8, a, "--dark")) o.dark = true else if (std.mem.eql(u8, a, "--panel")) o.panel = true else if (std.mem.eql(u8, a, "--tiled")) o.tiled = true else if (std.mem.eql(u8, a, "--size") and i + 1 < args.len) {
             i += 1;
             var it = std.mem.splitScalar(u8, args[i], 'x');
             o.w = try std.fmt.parseInt(i32, it.next() orelse "1440", 10);
@@ -505,19 +507,17 @@ pub fn main(init: std.process.Init) !void {
 
     const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = screen.lw, .h = screen.lh }, screen.scale, .{ .dark = opts.dark });
     defer comp.deinit();
-    if (opts.empty) {
-        // Nothing started.
-    } else if (opts.tiled or opts.snapshot != null) {
+    if (opts.tiled or opts.snapshot != null) {
         // Three growable windows (Scroll Lab, Notes, Reader) and two small
         // ones (Controls, Stopwatch). Four fit on a screen; the least
         // recently used goes to the panel. Scripted runs start this way.
         for ([_]usize{ 2, 4, 3, 1, 0 }) |a| _ = try comp.launch(a, clock.now());
-    } else {
-        // As after login: a clean desktop, with Controls, Scroll Lab and
-        // Notes started and waiting in the panel. The others are in the
-        // launcher.
+    } else if (opts.panel) {
+        // Controls, Scroll Lab and Notes started and waiting in the panel.
         for ([_]usize{ 0, 1, 3 }) |a| _ = try comp.launchMinimized(a, clock.now());
     }
+    // Otherwise, as after login: a clean desktop with nothing started. The
+    // apps are in the launcher.
 
     // Same order as core.input.Cursor.
     var cursors: [6]?*c.Cursor = .{

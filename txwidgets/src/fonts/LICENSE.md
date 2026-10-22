@@ -1,6 +1,6 @@
 # Fonts
 
-The `.txf` atlases in this folder are rendered from **Inter** (Regular and
+The `.tslx` atlases in this folder are rendered from **Inter** (Regular and
 SemiBold) by Rasmus Andersson, licensed under the SIL Open Font License 1.1
 (https://openfontlicense.org). Inter: https://rsms.me/inter/
 

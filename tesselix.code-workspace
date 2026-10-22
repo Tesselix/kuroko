@@ -100,9 +100,9 @@
 				}
 			},
 			{
-				"label": "Run Tesselix (empty desktop)",
+				"label": "Run Tesselix (apps in the panel)",
 				"type": "shell",
-				"command": "zig build run -- --empty",
+				"command": "zig build run -- --panel",
 				"problemMatcher": {
 					"owner": "zig",
 					"fileLocation": ["autoDetect", "${workspaceFolder}"],
@@ -185,11 +185,11 @@
 				"preLaunchTask": "Build"
 			},
 			{
-				"name": "Tesselix (empty desktop)",
+				"name": "Tesselix (apps in the panel)",
 				"type": "lldb",
 				"request": "launch",
 				"program": "${workspaceFolder}/zig-out/bin/txsim",
-				"args": ["--empty"],
+				"args": ["--panel"],
 				"cwd": "${workspaceFolder}",
 				"preLaunchTask": "Build"
 			},

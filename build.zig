@@ -3,6 +3,7 @@
 //!   zig build test        all unit tests (any OS)
 //!   zig build run         the simulator: compositor + desktop + apps (needs SDL3)
 //!   zig build run-desk    the desktop-service stub (context hub)
+//!   zig build run-desk -- apps scan   scan for installed apps (apps.tslx)
 //!   zig build             everything
 //!
 //! For the Ubuntu ARM VM (from the Mac): `sh tools/ubuntu/build.sh`, which runs
@@ -76,12 +77,18 @@ pub fn build(b: *std.Build) void {
             .{ .name = "controls", .module = controls },
         },
     });
+    const apps_test = b.createModule(.{
+        .root_source_file = b.path("txdesk/src/apps/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "txcore", .module = core }},
+    });
     const stub_test = b.createModule(.{
         .root_source_file = b.path("tools/txsim/src/sdl_stub.zig"),
         .target = target,
         .optimize = optimize,
     });
-    for ([_]*std.Build.Module{ core, widgets, comp, controls, headless, stub_test }) |m| {
+    for ([_]*std.Build.Module{ core, widgets, comp, controls, headless, stub_test, apps_test }) |m| {
         const t = b.addTest(.{ .root_module = m });
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
@@ -99,6 +106,7 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(desk);
     const run_desk = b.addRunArtifact(desk);
+    if (b.args) |args| run_desk.addArgs(args);
     b.step("run-desk", "Run the desktop-service stub").dependOn(&run_desk.step);
 
     // ------------------------------------------------------- simulator

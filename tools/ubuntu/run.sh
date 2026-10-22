@@ -4,7 +4,7 @@
 # (txdesk) in the background.
 #
 #   sh run.sh                 normal start (from the VM's console)
-#   sh run.sh --dark          any txsim options pass through (--empty, --script NAME)
+#   sh run.sh --dark          any txsim options pass through (--panel, --tiled, --script NAME)
 #   TX_DEBUG=1 sh run.sh      SDL3 logs every step (video, render, input)
 #   TX_DISPLAY=kms sh run.sh  SDL3 straight on KMS/DRM, without cage (see below)
 #   TX_MODE=2560x1600 sh run.sh   screen size, default 1920x1200 (one of the

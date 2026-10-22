@@ -34,7 +34,8 @@ Read this first, then the design documents in `docs/` for the part you touch.
    client death is detected from the socket closing.
 3. Every structure that crosses a process or reaches disk is a Tesselix record
    (`txcore.format`), with fixed-width fields, little-endian, extern structs.
-   Register type IDs in `txcore/src/types.zig`.
+   Register type IDs in `txcore/src/types.zig`. Files of Tesselix records
+   use the extension `.tslx` (for example `apps.tslx`).
 4. Theme roles only, never hard-coded colors. No state by color alone: add a
    shape cue. Nothing flashes more than 3 times per second.
 5. Acknowledge input within the frame; animations are clock-timed,
