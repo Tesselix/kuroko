@@ -13,6 +13,7 @@ The design is in [`docs/`](docs/README.md). Start with the Top-Level Design.
 | `txcore/` | Shared by everything: binary format and repair ladder, object registry (handles, guards), geometry, input events, theme roles, animation, wheel bands, timing histograms, IPC helpers |
 | `txwidgets/` | Widget library (Mode A): canvas rasterizer, fonts, widget tree and layout, buttons, toggles, checkboxes, progress, text fields, the document view with the scrolling behavior |
 | `txcomp/` | Compositor core: window model, attention tiling, chrome, top bar, launcher, shelf, event publisher. Backend-independent |
+| `txwl/` | Tesselix as a Wayland server: the wire format, the core and xdg-shell protocols in pure Zig. Apps' windows become compositor windows like Tesselix's own |
 | `txdesk/` | Desktop services. Now: a stub context hub that prints the scene graph as text |
 | `txdk/` | SDK for other languages (C ABI, Mode B UI host, bindings). Not started |
 | `apps/controls/` | The controls app: every widget's behavior in one place, growing with the library |
@@ -115,8 +116,15 @@ sh /mnt/shared/tesselix/browser.sh             # quit with Ctrl+Shift+Q; joins a
 TX_GPU=off sh /mnt/shared/tesselix/browser.sh  # CPU drawing, if the screen stays blank
 ```
 
-`run.sh` also starts the desktop service in the background (its log is
-`~/.cache/tesselix/txdesk.log`; the simulator's is `txsim.log`). Start it
+`run.sh` also starts the desktop service in the background. It scans for
+installed graphical apps (Chrome, Alacritty, ...) and the launcher lists
+them after the built-in apps. They open in Tesselix's tiles: Tesselix is
+their Wayland server (`wayland-tesselix-0` in the runtime directory), so
+the compositor gives each window its size and place. Any Wayland app can
+be pointed at it by hand: `WAYLAND_DISPLAY=wayland-tesselix-0 app`. By hand:
+`~/.cache/tesselix/bin/txdesk apps list` (or `apps scan --verbose`).
+The desktop service's log is `~/.cache/tesselix/txdesk.log`; the
+simulator's is `txsim.log`. Start `run.sh`
 from the VM's console, logged in as yourself: cage needs the console's seat.
 To quit, run `pkill txsim` over SSH (it prints a timing summary to the log); `pkill -9 txsim` if it hangs.
 

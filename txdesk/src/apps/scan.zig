@@ -303,6 +303,7 @@ const Scanner = struct {
                 try self.setOwner(app);
                 if (!std.mem.eql(u8, before, app.version)) {
                     try self.note(.upgraded, app.id, "{s} -> {s}", .{ before, app.version });
+                    if (std.mem.eql(u8, app.version, app.available_version)) app.available_version = "";
                 }
             }
         }

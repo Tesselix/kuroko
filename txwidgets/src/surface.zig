@@ -15,6 +15,17 @@ pub const Status = struct {
     progress: f32 = 0,
 };
 
+/// How the compositor shows a window (Wayland: xdg_toplevel states).
+pub const WindowState = packed struct(u8) {
+    /// Has the keyboard.
+    focused: bool = false,
+    maximized: bool = false,
+    fullscreen: bool = false,
+    /// In a tile: every edge is fixed by its neighbours.
+    tiled: bool = false,
+    _pad: u4 = 0,
+};
+
 pub const Surface = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -44,7 +55,18 @@ pub const Surface = struct {
         wants_close: *const fn (*anyopaque) bool,
         /// The compositor closed the window; free everything.
         destroy: *const fn (*anyopaque) void,
+        /// The window's state changed (focus, maximized, ...).
+        window_state: *const fn (*anyopaque, WindowState) void = noState,
+        /// The user closes the window. True: the app was asked and closes
+        /// in its own time (it may ask to save first); `wants_close` turns
+        /// true when it is done. False: close it now.
+        request_close: *const fn (*anyopaque) bool = closeNow,
     };
+
+    fn noState(_: *anyopaque, _: WindowState) void {}
+    fn closeNow(_: *anyopaque) bool {
+        return false;
+    }
 
     pub fn title(s: Surface) []const u8 {
         return s.vtable.title(s.ptr);
@@ -87,5 +109,11 @@ pub const Surface = struct {
     }
     pub fn destroy(s: Surface) void {
         s.vtable.destroy(s.ptr);
+    }
+    pub fn windowState(s: Surface, st: WindowState) void {
+        s.vtable.window_state(s.ptr, st);
+    }
+    pub fn requestClose(s: Surface) bool {
+        return s.vtable.request_close(s.ptr);
     }
 };

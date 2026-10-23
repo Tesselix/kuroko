@@ -8,7 +8,10 @@
 //! It runs as a separate process. If it crashes or hangs, the compositor
 //! carries on; if the compositor restarts, txdesk reconnects.
 //!
-//! The app registry (apps/), for now as commands:
+//! It also keeps the app registry (apps/): it loads apps.tslx, sends the
+//! known apps to the compositor, scans for changes (at start, then every
+//! five minutes; apt updates every six hours), saves, and sends what
+//! changed. By hand:
 //!   txdesk apps scan [--x11] [--verbose] [--file PATH]
 //!                         scan for installed graphical apps, update apps.tslx
 //!   txdesk apps list [--skipped] [--file PATH]
@@ -109,6 +112,11 @@ const Scene = struct {
     }
 };
 
+/// How often the registry is checked again (cheap: known files are only
+/// `stat`ed), and how often apt is asked about updates.
+const scan_every_ms: i64 = 5 * 60 * 1000;
+const updates_every_ms: i64 = 6 * 60 * 60 * 1000;
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -126,50 +134,187 @@ pub fn main(init: std.process.Init) !void {
     defer scene.windows.deinit(gpa);
     const start = std.Io.Timestamp.now(io, .awake).toMilliseconds();
 
+    // The app registry: loaded first, so the compositor gets the known
+    // apps at once; scanned right after.
+    var desk: Desk = .{
+        .gpa = gpa,
+        .io = io,
+        .out = out,
+        .file = try registryFile(init),
+        .home = init.environ_map.get("HOME") orelse "/",
+        .store = .init(gpa),
+        .link = .init(gpa),
+    };
+    defer desk.deinit();
+    desk.load();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(gpa);
+    var log: core.format.RepairLog = .{};
+    var next_scan: i64 = 0;
+    var waiting_said = false;
     while (true) {
-        const fd = core.ipc.connect(path) catch {
-            try out.print("txdesk: waiting for the compositor at {s}\n", .{path});
+        if (desk.fd == null) {
+            if (core.ipc.connect(path)) |fd| {
+                desk.fd = fd;
+                waiting_said = false;
+                buf.clearRetainingCapacity();
+                scene.windows.clearRetainingCapacity();
+                try out.print("txdesk: connected\n", .{});
+                desk.sendSnapshot();
+            } else |_| if (!waiting_said) {
+                try out.print("txdesk: waiting for the compositor at {s}\n", .{path});
+                waiting_said = true;
+            }
             try out.flush();
-            io.sleep(.fromSeconds(2), .awake) catch {};
+        }
+
+        const now = std.Io.Timestamp.now(io, .awake).toMilliseconds();
+        if (now >= next_scan) {
+            desk.refresh(now);
+            next_scan = now + scan_every_ms;
+        }
+
+        const left: i32 = @intCast(std.math.clamp(next_scan - std.Io.Timestamp.now(io, .awake).toMilliseconds(), 0, 2000));
+        const fd = desk.fd orelse {
+            io.sleep(.fromMilliseconds(left), .awake) catch {};
             continue;
         };
-        try out.print("txdesk: connected\n", .{});
-        try out.flush();
-
-        var buf: std.ArrayList(u8) = .empty;
-        defer buf.deinit(gpa);
-        var log: core.format.RepairLog = .{};
-        while (true) {
-            var chunk: [8192]u8 = undefined;
-            const n = core.ipc.read(fd, &chunk) catch 0;
-            if (n == 0) break; // compositor gone
-            try buf.appendSlice(gpa, chunk[0..n]);
-
-            var reader = core.format.Reader.init(buf.items, &types.known);
-            var changed = false;
-            while (reader.next()) |rec| {
-                if (try scene.apply(rec)) changed = true;
-            }
-            for (std.enums.values(core.format.Repair)) |r| {
-                if (r != .none) log.counts.getPtr(r).* += reader.log.counts.get(r);
-            }
-            // Keep a partial record for the next read.
-            const rest = reader.remaining().len;
-            std.mem.copyForwards(u8, buf.items[0..rest], buf.items[buf.items.len - rest ..]);
-            buf.shrinkRetainingCapacity(rest);
-
-            if (changed) {
-                const t = @as(f64, @floatFromInt(std.Io.Timestamp.now(io, .awake).toMilliseconds() - start)) / 1000;
-                try scene.print(out, t);
-                if (log.total() > 0) try out.print("  (repairs so far: {d})\n", .{log.total()});
-                try out.flush();
-            }
+        if (!core.ipc.waitReadable(fd, left)) continue;
+        var chunk: [8192]u8 = undefined;
+        const n = core.ipc.read(fd, &chunk) catch 0;
+        if (n == 0) {
+            desk.disconnect();
+            try out.print("txdesk: compositor closed the connection; reconnecting\n", .{});
+            try out.flush();
+            continue;
         }
-        core.ipc.close(fd);
-        try out.print("txdesk: compositor closed the connection; reconnecting\n", .{});
-        try out.flush();
-        scene.windows.clearRetainingCapacity();
+        try buf.appendSlice(gpa, chunk[0..n]);
+
+        var reader = core.format.Reader.init(buf.items, &types.known);
+        var changed = false;
+        while (reader.next()) |rec| {
+            if (rec.type_id == types.desk_request) {
+                const req = core.format.readStruct(types.DeskRequest, rec);
+                if (req.kind == .app_snapshot) desk.sendSnapshot();
+                continue;
+            }
+            if (try scene.apply(rec)) changed = true;
+        }
+        for (std.enums.values(core.format.Repair)) |r| {
+            if (r != .none) log.counts.getPtr(r).* += reader.log.counts.get(r);
+        }
+        // Keep a partial record for the next read.
+        const rest = reader.remaining().len;
+        std.mem.copyForwards(u8, buf.items[0..rest], buf.items[buf.items.len - rest ..]);
+        buf.shrinkRetainingCapacity(rest);
+
+        if (changed) {
+            const t = @as(f64, @floatFromInt(std.Io.Timestamp.now(io, .awake).toMilliseconds() - start)) / 1000;
+            try scene.print(out, t);
+            if (log.total() > 0) try out.print("  (repairs so far: {d})\n", .{log.total()});
+            try out.flush();
+        }
     }
+}
+
+/// The app registry as the running service keeps it: the file, and the
+/// compositor's copy (link.zig). Saves first, then tells the compositor.
+const Desk = struct {
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    out: *std.Io.Writer,
+    file: []const u8,
+    home: []const u8,
+    store: apps.store.Store,
+    link: apps.link.Link,
+    fd: ?core.ipc.Fd = null,
+    next_updates: i64 = 0,
+    bytes: std.ArrayList(u8) = .empty,
+
+    fn deinit(self: *Desk) void {
+        self.disconnect();
+        self.bytes.deinit(self.gpa);
+        self.link.deinit();
+        self.store.deinit();
+    }
+
+    fn load(self: *Desk) void {
+        var log: core.format.RepairLog = .{};
+        apps.scan.load(self.gpa, self.io, self.file, &self.store, &log) catch |err| {
+            self.out.print("txdesk: {s} is unreadable ({s}); moved aside, rebuilding\n", .{ self.file, @errorName(err) }) catch {};
+        };
+        if (log.total() > 0) self.out.print("txdesk: {s}: {d} damaged records skipped\n", .{ self.file, log.total() }) catch {};
+        self.out.print("txdesk: {d} apps known\n", .{self.store.apps.items.len}) catch {};
+    }
+
+    /// Scan, check updates when due, save when anything changed, and send
+    /// the changes. A failure is reported and the service carries on.
+    fn refresh(self: *Desk, now_ms: i64) void {
+        const t0 = std.Io.Timestamp.now(self.io, .awake);
+        const report = apps.scan.scan(self.gpa, &self.store, .{
+            .io = self.io,
+            .home = self.home,
+            .now_s = std.Io.Timestamp.now(self.io, .real).toSeconds(),
+        }) catch |err| {
+            self.out.print("txdesk: scan failed: {s}\n", .{@errorName(err)}) catch {};
+            return;
+        };
+        var updated: u32 = 0;
+        if (now_ms >= self.next_updates) {
+            updated = apps.updates.check(self.gpa, self.io, &self.store) catch |err| blk: {
+                self.out.print("txdesk: update check failed: {s}\n", .{@errorName(err)}) catch {};
+                break :blk 0;
+            };
+            self.next_updates = now_ms + updates_every_ms;
+        }
+        const ms = t0.durationTo(std.Io.Timestamp.now(self.io, .awake)).toMilliseconds();
+        for (report.changes.items) |c| self.out.print("txdesk: app {s} {s}: {s}\n", .{ @tagName(c.kind), c.id, c.detail }) catch {};
+        if (updated > 0) self.out.print("txdesk: update check: {d} apps changed\n", .{updated}) catch {};
+        self.out.print("txdesk: scan {d} ms, {d} inspected, {d} known, {d} apps\n", .{ ms, report.inspected, report.skipped, self.store.apps.items.len }) catch {};
+        self.out.flush() catch {};
+        if (report.changes.items.len == 0 and report.inspected == 0 and report.desktop_entries == 0 and updated == 0) return;
+        apps.scan.save(self.gpa, self.io, self.file, &self.store) catch |err| {
+            self.out.print("txdesk: cannot save {s}: {s}\n", .{ self.file, @errorName(err) }) catch {};
+            return;
+        };
+        if (self.fd == null) return;
+        self.bytes.clearRetainingCapacity();
+        self.link.changes(&self.bytes, &self.store) catch return;
+        self.send();
+    }
+
+    fn sendSnapshot(self: *Desk) void {
+        if (self.fd == null) return;
+        self.bytes.clearRetainingCapacity();
+        self.link.snapshot(&self.bytes, &self.store) catch return;
+        self.send();
+    }
+
+    /// The socket blocks: txdesk may wait, the compositor never does.
+    fn send(self: *Desk) void {
+        const fd = self.fd orelse return;
+        var rest = self.bytes.items;
+        while (rest.len > 0) {
+            const n = core.ipc.write(fd, rest) catch |err| switch (err) {
+                error.WouldBlock => continue,
+                else => return self.disconnect(),
+            };
+            rest = rest[n..];
+        }
+    }
+
+    fn disconnect(self: *Desk) void {
+        if (self.fd) |fd| core.ipc.close(fd);
+        self.fd = null;
+    }
+};
+
+fn registryFile(init: std.process.Init) ![]const u8 {
+    const arena = init.arena.allocator();
+    if (init.environ_map.get("XDG_STATE_HOME")) |st| return std.fs.path.join(arena, &.{ st, "tesselix/apps.tslx" });
+    const home = init.environ_map.get("HOME") orelse return error.NoHome;
+    return std.fs.path.join(arena, &.{ home, ".local/state/tesselix/apps.tslx" });
 }
 
 // ------------------------------------------------------------ app registry
@@ -177,17 +322,13 @@ pub fn main(init: std.process.Init) !void {
 fn appsCommand(init: std.process.Init, args: []const [:0]const u8) !void {
     const gpa = init.gpa;
     const io = init.io;
-    const arena = init.arena.allocator();
     var stdout_buf: [8192]u8 = undefined;
     var stdout_w = std.Io.File.stdout().writer(io, &stdout_buf);
     const out = &stdout_w.interface;
     defer out.flush() catch {};
 
     const home = init.environ_map.get("HOME") orelse return error.NoHome;
-    var file: []const u8 = if (init.environ_map.get("XDG_STATE_HOME")) |st|
-        try std.fs.path.join(arena, &.{ st, "tesselix/apps.tslx" })
-    else
-        try std.fs.path.join(arena, &.{ home, ".local/state/tesselix/apps.tslx" });
+    var file = try registryFile(init);
     var x11 = false;
     var verbose = false;
     var skipped = false;

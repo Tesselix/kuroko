@@ -10,6 +10,10 @@ sudo apt-get update
 # kmscube and drm-info to test the screen alone.
 sudo apt-get install -y libsdl3-0 libgbm1 libegl1 libegl-mesa0 libgles2 \
     libgl1-mesa-dri cage wlr-randr kmscube drm-info
+# For apps in Tesselix: the keyboard map apps compile (xkb-data), SVG app
+# icons drawn to pixels (rsvg-convert), and fonts for Chinese, Japanese and
+# Korean text and for emoji.
+sudo apt-get install -y xkb-data librsvg2-bin fonts-noto-cjk fonts-noto-color-emoji
 # Screen and input devices without sudo.
 missing=""
 for g in video render input; do

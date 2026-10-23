@@ -153,6 +153,22 @@ pub const Canvas = struct {
         }
     }
 
+    /// Dashed vertical line.
+    pub fn dashedV(self: *Canvas, x: i32, y: i32, h: i32, t: i32, dash: i32, gap: i32, c: Color) void {
+        var py = y;
+        while (py < y + h) : (py += dash + gap) {
+            self.fillRect(.{ .x = x, .y = py, .w = t, .h = @min(dash, y + h - py) }, c);
+        }
+    }
+
+    /// Dashed outline of a rect (a ghost: shape as well as faded color).
+    pub fn dashedRect(self: *Canvas, r: Rect, t: i32, dash: i32, gap: i32, c: Color) void {
+        self.dashedH(r.x, r.y, r.w, t, dash, gap, c);
+        self.dashedH(r.x, r.bottom() - t, r.w, t, dash, gap, c);
+        self.dashedV(r.x, r.y, r.h, t, dash, gap, c);
+        self.dashedV(r.right() - t, r.y, r.h, t, dash, gap, c);
+    }
+
     // ------------------------------------------------ anti-aliased shapes
 
     fn cov(d: f32) u8 {

@@ -3,11 +3,18 @@
 //!
 //! The compositor never waits: writes are non-blocking, and a subscriber
 //! that falls behind loses its queued deltas and gets a full snapshot.
+//!
+//! Subscribers also send records back (txdesk: the app registry), read
+//! without blocking. Control records to subscribers (requests) have their
+//! own queue, sent first, which a snapshot never clears.
 
 const std = @import("std");
 const core = @import("txcore");
 
 const max_pending = 256 * 1024;
+/// A subscriber that sends more than this without a complete record is
+/// dropped.
+const max_inbox = 4 * 1024 * 1024;
 
 pub const Publisher = struct {
     gpa: std.mem.Allocator,
@@ -19,7 +26,17 @@ pub const Publisher = struct {
     const Sub = struct {
         fd: core.ipc.Fd,
         pending: std.ArrayList(u8) = .empty,
+        control: std.ArrayList(u8) = .empty,
+        inbox: std.ArrayList(u8) = .empty,
         needs_snapshot: bool = true,
+        dead: bool = false,
+
+        fn deinit(self: *Sub, gpa: std.mem.Allocator) void {
+            core.ipc.close(self.fd);
+            self.pending.deinit(gpa);
+            self.control.deinit(gpa);
+            self.inbox.deinit(gpa);
+        }
     };
 
     /// Returned by value: keeps no pointers into itself.
@@ -40,10 +57,7 @@ pub const Publisher = struct {
     }
 
     pub fn deinit(self: *Publisher) void {
-        for (self.subs.items) |*s| {
-            core.ipc.close(s.fd);
-            s.pending.deinit(self.gpa);
-        }
+        for (self.subs.items) |*s| s.deinit(self.gpa);
         self.subs.deinit(self.gpa);
         if (self.listen_fd) |fd| {
             core.ipc.close(fd);
@@ -92,26 +106,66 @@ pub const Publisher = struct {
         }
     }
 
+    /// Queues a control record (a request) for every subscriber.
+    pub fn sendControl(self: *Publisher, bytes: []const u8) void {
+        for (self.subs.items) |*s| s.control.appendSlice(self.gpa, bytes) catch {};
+    }
+
+    /// Reads what subscribers sent, without blocking, and hands each
+    /// complete record to `handler`. The record's bytes are valid only
+    /// during the call.
+    pub fn receive(self: *Publisher, ctx: anytype, comptime handler: fn (@TypeOf(ctx), core.format.Record) void) void {
+        for (self.subs.items) |*s| {
+            if (s.dead) continue;
+            while (true) {
+                var chunk: [16 * 1024]u8 = undefined;
+                const n = core.ipc.read(s.fd, &chunk) catch |err| switch (err) {
+                    error.WouldBlock => break,
+                    else => {
+                        s.dead = true;
+                        break;
+                    },
+                };
+                if (n == 0 or s.inbox.items.len + n > max_inbox) {
+                    s.dead = true;
+                    break;
+                }
+                s.inbox.appendSlice(self.gpa, chunk[0..n]) catch {
+                    s.dead = true;
+                    break;
+                };
+            }
+            var reader = core.format.Reader.init(s.inbox.items, &core.types.known);
+            while (reader.next()) |rec| handler(ctx, rec);
+            // Keep a partial record for the next read.
+            const rest = reader.remaining().len;
+            std.mem.copyForwards(u8, s.inbox.items[0..rest], s.inbox.items[s.inbox.items.len - rest ..]);
+            s.inbox.shrinkRetainingCapacity(rest);
+        }
+    }
+
     pub fn flush(self: *Publisher) void {
         var i: usize = 0;
         while (i < self.subs.items.len) {
             const s = &self.subs.items[i];
-            var dead = false;
-            while (s.pending.items.len > 0) {
-                const n = core.ipc.write(s.fd, s.pending.items) catch |err| switch (err) {
-                    error.WouldBlock => break,
-                    else => {
-                        dead = true;
-                        break;
-                    },
-                };
-                if (n == 0) break;
-                s.pending.replaceRange(self.gpa, 0, n, &.{}) catch {};
+            for ([_]*std.ArrayList(u8){ &s.control, &s.pending }) |queue| {
+                while (!s.dead and queue.items.len > 0) {
+                    const n = core.ipc.write(s.fd, queue.items) catch |err| switch (err) {
+                        error.WouldBlock => break,
+                        else => {
+                            s.dead = true;
+                            break;
+                        },
+                    };
+                    if (n == 0) break;
+                    queue.replaceRange(self.gpa, 0, n, &.{}) catch {};
+                }
+                // Requests go out before scene deltas.
+                if (queue == &s.control and queue.items.len > 0) break;
             }
-            if (dead) {
+            if (s.dead) {
                 // Client death is detected from the socket, nothing else.
-                core.ipc.close(s.fd);
-                s.pending.deinit(self.gpa);
+                s.deinit(self.gpa);
                 _ = self.subs.swapRemove(i);
             } else i += 1;
         }

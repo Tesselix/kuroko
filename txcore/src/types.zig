@@ -14,6 +14,8 @@ const format = @import("format.zig");
 
 pub const font_atlas: u16 = 0x0101;
 pub const scene_window: u16 = 0x0201;
+pub const desk_request: u16 = 0x0202;
+pub const desk_app: u16 = 0x0301;
 pub const apps_header: u16 = 0x0501;
 pub const app_entry: u16 = 0x0502;
 pub const scan_entry: u16 = 0x0503;
@@ -23,6 +25,8 @@ pub const search_path: u16 = 0x0504;
 pub const known = [_]format.Known{
     .{ .type_id = font_atlas, .max_version = 1 },
     .{ .type_id = scene_window, .max_version = 1 },
+    .{ .type_id = desk_request, .max_version = 1 },
+    .{ .type_id = desk_app, .max_version = 1 },
     .{ .type_id = apps_header, .max_version = 1 },
     .{ .type_id = app_entry, .max_version = 1 },
     .{ .type_id = scan_entry, .max_version = 1 },
@@ -203,4 +207,65 @@ comptime {
     std.debug.assert(@sizeOf(AppEntry) == 48);
     std.debug.assert(@sizeOf(ScanEntry) == 32);
     std.debug.assert(@sizeOf(SearchPath) == 8);
+}
+
+// ----------------------------------------- app registry → compositor
+//
+// txdesk keeps the registry; the compositor keeps a read-only copy of what
+// it shows. txdesk sends a snapshot when it connects (and when asked), and
+// after every save of apps.tslx the apps that changed, then a `saved`
+// marker with the save count, even when no app changed. A count that skips
+// one means something was lost: the compositor asks for a snapshot.
+
+pub const DeskAppKind = enum(u8) {
+    snapshot_begin,
+    /// One app, new or changed (in a snapshot or after a save).
+    app,
+    snapshot_end,
+    /// The app left the registry (the user forgot it). Strings: the key.
+    removed,
+    /// End of the changes of one save.
+    saved,
+    _,
+};
+
+pub const desk_app_update: u8 = 1; // flag: a newer version is available
+
+/// Trailing data (kind .app): `string_count` strings in `DeskAppString`
+/// order (see format.appendString).
+pub const DeskApp = extern struct {
+    kind: DeskAppKind,
+    status: AppStatus,
+    flags: u8,
+    _pad0: u8 = 0,
+    string_count: u32,
+    save_count: u64,
+};
+
+pub const DeskAppString = enum(u16) {
+    /// The binary: the app's key.
+    key,
+    id,
+    name,
+    /// Absolute path of the icon file, or "".
+    icon,
+    /// List: the command, absolute; desktop field codes (%U) kept.
+    exec,
+    version,
+    available_version,
+};
+
+pub const DeskRequestKind = enum(u8) { app_snapshot, _ };
+
+/// Compositor → txdesk.
+pub const DeskRequest = extern struct {
+    kind: DeskRequestKind,
+    _pad0: [7]u8 = @splat(0),
+};
+
+comptime {
+    format.checkPortable(DeskApp);
+    format.checkPortable(DeskRequest);
+    std.debug.assert(@sizeOf(DeskApp) == 16);
+    std.debug.assert(@sizeOf(DeskRequest) == 8);
 }

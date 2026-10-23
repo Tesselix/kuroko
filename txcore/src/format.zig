@@ -255,6 +255,62 @@ pub fn trailing(comptime T: type, rec: Record) []const u8 {
     return rec.payload[@sizeOf(T)..];
 }
 
+/// Variable-length strings after a struct: each a u16 length (little-
+/// endian) and the bytes. A list is one string with its items separated by
+/// NUL. The struct carries the count, so a newer writer can add strings at
+/// the end and an older reader ignores them.
+pub fn appendString(gpa: std.mem.Allocator, out: *std.ArrayList(u8), s: []const u8) !void {
+    if (s.len > std.math.maxInt(u16)) return error.StringTooLong;
+    var n: [2]u8 = undefined;
+    std.mem.writeInt(u16, &n, @intCast(s.len), .little);
+    try out.appendSlice(gpa, &n);
+    try out.appendSlice(gpa, s);
+}
+
+pub fn appendStringList(gpa: std.mem.Allocator, out: *std.ArrayList(u8), items: []const []const u8) !void {
+    var len: usize = 0;
+    for (items, 0..) |s, i| len += s.len + @intFromBool(i > 0);
+    if (len > std.math.maxInt(u16)) return error.StringTooLong;
+    var n: [2]u8 = undefined;
+    std.mem.writeInt(u16, &n, @intCast(len), .little);
+    try out.appendSlice(gpa, &n);
+    for (items, 0..) |s, i| {
+        if (i > 0) try out.append(gpa, 0);
+        try out.appendSlice(gpa, s);
+    }
+}
+
+/// Reads the strings written by `appendString`. Past the count, or past a
+/// damaged length, it returns "" and sets `bad` for the damage.
+pub const StringReader = struct {
+    bytes: []const u8,
+    left: u32,
+    bad: bool = false,
+
+    pub fn next(self: *StringReader) []const u8 {
+        if (self.left == 0) return "";
+        self.left -= 1;
+        if (self.bytes.len < 2) {
+            self.bad = true;
+            return "";
+        }
+        const n = std.mem.readInt(u16, self.bytes[0..2], .little);
+        if (self.bytes.len - 2 < n) {
+            self.bad = true;
+            self.bytes = &.{};
+            return "";
+        }
+        const s = self.bytes[2..][0..n];
+        self.bytes = self.bytes[2 + n ..];
+        return s;
+    }
+};
+
+/// The items of a list string, without allocating.
+pub fn listItems(joined: []const u8) std.mem.SplitIterator(u8, .scalar) {
+    return std.mem.splitScalar(u8, joined, 0);
+}
+
 /// Swaps every field of a portable struct in place, generated at compile
 /// time from the single definition of the type.
 pub fn byteSwapAll(comptime T: type, value: *T) void {
@@ -407,4 +463,24 @@ test "truncated record waits for more bytes" {
     var r = Reader.init(out.items[0..20], &test_known);
     try testing.expect(r.next() == null);
     try testing.expectEqual(@as(usize, 20), r.remaining().len);
+}
+
+test "strings after a struct" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try appendString(gpa, &out, "Google Chrome");
+    try appendStringList(gpa, &out, &.{ "/usr/bin/google-chrome-stable", "%U" });
+    try appendString(gpa, &out, "");
+    var r: StringReader = .{ .bytes = out.items, .left = 4 };
+    try std.testing.expectEqualStrings("Google Chrome", r.next());
+    var it = listItems(r.next());
+    try std.testing.expectEqualStrings("/usr/bin/google-chrome-stable", it.next().?);
+    try std.testing.expectEqualStrings("%U", it.next().?);
+    try std.testing.expectEqualStrings("", r.next());
+    try std.testing.expectEqualStrings("", r.next()); // past what was written
+    try std.testing.expect(r.bad);
+    var cut: StringReader = .{ .bytes = out.items[0..5], .left = 1 };
+    try std.testing.expectEqualStrings("", cut.next());
+    try std.testing.expect(cut.bad);
 }

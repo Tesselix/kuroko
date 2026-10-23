@@ -20,8 +20,10 @@ out="$share/tesselix"
 
 cd "$root"
 zig build -Dtarget="$target" -Doptimize="$optimize" --prefix "$out"
-cp tools/ubuntu/run.sh tools/ubuntu/setup.sh tools/ubuntu/check.sh tools/ubuntu/browser.sh "$out/"
-chmod +x "$out/run.sh" "$out/setup.sh" "$out/check.sh" "$out/browser.sh" "$out/bin/"*
+# Readable and runnable by everyone: on the VM the share shows the Mac's
+# owner (uid 501), not the VM's user.
+install -m 755 tools/ubuntu/run.sh tools/ubuntu/setup.sh tools/ubuntu/check.sh tools/ubuntu/browser.sh "$out/"
+chmod 755 "$out/bin/"*
 echo
 echo "Built for $target ($optimize) in $out. On the VM:"
 echo "  sh $vm_share/tesselix/check.sh"

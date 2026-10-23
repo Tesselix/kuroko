@@ -5,6 +5,7 @@ pub const tiling = @import("tiling.zig");
 pub const chrome = @import("chrome.zig");
 pub const shell = @import("shell.zig");
 pub const publish = @import("publish.zig");
+pub const apps = @import("apps.zig");
 pub const compositor = @import("compositor.zig");
 
 pub const Compositor = compositor.Compositor;

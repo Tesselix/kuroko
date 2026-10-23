@@ -13,6 +13,7 @@ const tiling = @import("tiling.zig");
 const chrome = @import("chrome.zig");
 const shell = @import("shell.zig");
 const Publisher = @import("publish.zig").Publisher;
+const installed = @import("apps.zig");
 
 const Rect = core.Rect;
 const RectF = core.geom.RectF;
@@ -86,9 +87,17 @@ const Window = struct {
     menu_leave_since: ?i64 = null,
 
     status: tw.surface.Status = .{},
+    /// An installed app was started and its window has not come yet.
+    waiting: bool = false,
+    /// The user asked to close; the app closes in its own time.
+    closing: bool = false,
+    /// The state last told to the surface (focused, maximized, ...).
+    told_state: u8 = 0xff,
 };
 
 const anim_ms = 200;
+/// An installed app that shows no window this long failed to start.
+const wait_ms = 60_000;
 /// Flying into the panel takes a little longer: it travels further.
 const fly_ms = 260;
 /// Zoom into full screen and the slide between spaces.
@@ -253,7 +262,14 @@ pub const Compositor = struct {
     screen: Size,
     scale: i32,
     apps: []const AppEntry,
-    app_infos: []shell.AppInfo,
+    /// The launcher's apps: the built-in ones (`apps`), then the installed
+    /// apps from txdesk's registry (`installed`), in the same order.
+    app_infos: std.ArrayList(shell.AppInfo) = .empty,
+    installed: installed.Registry,
+    /// A snapshot of the registry was asked for and has not come yet.
+    apps_asked: bool = false,
+    /// See `setChildEnv`.
+    child_env: []const []const u8 = &.{},
     stats: []LaunchStats,
     recent: std.ArrayList(usize) = .empty,
 
@@ -319,8 +335,9 @@ pub const Compositor = struct {
     pub fn init(gpa: std.mem.Allocator, apps: []const AppEntry, screen: Size, scale: i32, params: Params) !*Compositor {
         const c = try gpa.create(Compositor);
         errdefer gpa.destroy(c);
-        const infos = try gpa.alloc(shell.AppInfo, apps.len);
-        for (apps, 0..) |a, i| infos[i] = .{ .name = a.name };
+        var infos: std.ArrayList(shell.AppInfo) = .empty;
+        errdefer infos.deinit(gpa);
+        for (apps) |a| try infos.append(gpa, .{ .name = a.name });
         const stats = try gpa.alloc(LaunchStats, apps.len);
         @memset(stats, .{});
         c.* = .{
@@ -331,6 +348,7 @@ pub const Compositor = struct {
             .scale = scale,
             .apps = apps,
             .app_infos = infos,
+            .installed = .init(gpa),
             .stats = stats,
             .windows = core.Registry(Window).init(gpa),
             .publisher = Publisher.init(gpa),
@@ -357,7 +375,8 @@ pub const Compositor = struct {
         self.recent.deinit(self.gpa);
         self.scratch.deinit(self.gpa);
         self.publisher.deinit();
-        self.gpa.free(self.app_infos);
+        self.app_infos.deinit(self.gpa);
+        self.installed.deinit();
         self.gpa.free(self.stats);
         self.gpa.destroy(self);
     }
@@ -473,6 +492,23 @@ pub const Compositor = struct {
         self.stats[w.app].add(now - w.launch_start);
         s.configure(w.content, self.scale);
         w.dirty = true;
+    }
+
+    /// The user closes a window. An app that closes in its own time (a
+    /// Wayland app may ask to save first) is asked, and the window goes
+    /// when the app is done; anything else closes now.
+    pub fn requestClose(self: *Compositor, h: Handle, now: i64) void {
+        {
+            const g = self.windows.acquire(h) orelse return;
+            defer g.release();
+            if (g.ptr.surface) |s| {
+                if (s.requestClose()) {
+                    g.ptr.closing = true;
+                    return;
+                }
+            }
+        }
+        self.close(h, now);
     }
 
     pub fn close(self: *Compositor, h: Handle, now: i64) void {
@@ -1159,7 +1195,7 @@ pub const Compositor = struct {
                     return;
                 }
                 if (self.launcher.open) {
-                    if (k.pressed) self.launcherAction(self.launcher.key(self.app_infos, k.key, k.mods.shift), now);
+                    if (k.pressed) self.launcherAction(self.launcher.key(self.app_infos.items, k.key, k.mods.shift), now);
                     return;
                 }
                 if ((self.preview != null or self.panel_menu != null) and k.pressed and k.key == .escape) {
@@ -1225,7 +1261,7 @@ pub const Compositor = struct {
         }
         const f = self.focused orelse return;
         switch (k) {
-            .x => self.close(f, now),
+            .x => self.requestClose(f, now),
             .z => self.shelve(f, now), // shelve (minimize)
             .enter => self.toggleMaximize(f, now),
             .f => self.toggleFullscreen(f, now),
@@ -1235,7 +1271,7 @@ pub const Compositor = struct {
 
     fn windowAction(self: *Compositor, h: Handle, which: chrome.Button, now: i64) void {
         switch (which) {
-            .close => self.close(h, now),
+            .close => self.requestClose(h, now),
             .shelve => self.shelve(h, now),
             .maximize => self.toggleMaximize(h, now),
             .fullscreen => self.toggleFullscreen(h, now),
@@ -1276,7 +1312,7 @@ pub const Compositor = struct {
         } else {
             const px = if (self.px < 0) @as(f32, @floatFromInt(self.screen.w)) / 2 else self.px;
             const py = if (self.py < 0) @as(f32, @floatFromInt(self.screen.h)) / 2 else self.py;
-            self.launcher.show(.{ .x = 0, .y = 0, .w = self.screen.w, .h = self.screen.h }, px, py, self.app_infos, self.recent.items, now);
+            self.launcher.show(.{ .x = 0, .y = 0, .w = self.screen.w, .h = self.screen.h }, px, py, self.app_infos.items, self.recent.items, now);
         }
         self.full_redraw = true;
     }
@@ -1321,15 +1357,182 @@ pub const Compositor = struct {
 
     fn updateRunning(self: *Compositor) void {
         var buf: [8]Handle = undefined;
-        for (self.app_infos, 0..) |*info, i| info.running = @intCast(self.windowsOf(i, &buf));
+        for (self.app_infos.items, 0..) |*info, i| info.running = @intCast(self.windowsOf(i, &buf));
     }
 
     /// A new window: it grows out of the icon into its tile.
     fn launchFrom(self: *Compositor, app: usize, from: Rect, now: i64) void {
         if (self.space != 0) self.switchSpace(0, now);
-        const h = self.launch(app, now) catch return;
+        const h = (if (app >= self.apps.len) self.launchInstalled(app, now) else self.launch(app, now)) catch return;
         self.growFrom(h, from, now);
         self.startCue(h, from, now);
+    }
+
+    /// Starts an installed app from the registry, with a launch
+    /// placeholder that its first window replaces (`adoptWindow`).
+    fn launchInstalled(self: *Compositor, app: usize, now: i64) !Handle {
+        const e = &self.installed.entries.items[app - self.apps.len];
+        if (e.status != .installed) return error.NotInstalled;
+        var buf: [64][]const u8 = undefined;
+        const argv = core.proc.withoutFieldCodes(e.exec, &buf);
+        const pid = core.proc.spawn(self.gpa, argv, self.child_env) catch |err| {
+            std.log.err("cannot start {s} ({s}): {s}", .{ e.name, if (argv.len > 0) argv[0] else "", @errorName(err) });
+            return err;
+        };
+        std.log.info("started {s} (pid {d}): {s}", .{ e.name, pid, argv[0] });
+        self.launch_seq += 1;
+        const h = try self.windows.create(.{
+            .app = app,
+            .seq = self.launch_seq,
+            .launch_start = now,
+            .ready_at = std.math.maxInt(i64),
+            .expected_ns = 3000 * ms,
+            .waiting = true,
+        });
+        try self.openNew(h, app, now);
+        return h;
+    }
+
+    /// A new window joins the tiles, focused, on the desktop.
+    fn openNew(self: *Compositor, h: Handle, app: usize, now: i64) !void {
+        try self.tiles.append(self.gpa, h);
+        for (self.recent.items, 0..) |a, i| {
+            if (a == app) {
+                _ = self.recent.orderedRemove(i);
+                break;
+            }
+        }
+        try self.recent.insert(self.gpa, 0, app);
+        self.maximized = null;
+        self.pre_max.clearRetainingCapacity();
+        if (self.space != 0) self.switchSpace(0, now);
+        self.focus(h, now);
+        self.enforceLimit(now);
+        self.relayout(now, true);
+        self.publishWindow(h, .opened);
+    }
+
+    /// The environment of the apps Tesselix starts (WAYLAND_DISPLAY of its
+    /// own server, ...): "NAME=value" sets, "NAME" removes.
+    pub fn setChildEnv(self: *Compositor, env: []const []const u8) void {
+        self.child_env = env;
+    }
+
+    /// A window from an app outside Tesselix (a Wayland client). It takes
+    /// the place of its app's launch placeholder when there is one;
+    /// otherwise it opens like any new window. The app is found by its
+    /// binary in the registry, then by its app id.
+    pub fn adoptWindow(self: *Compositor, s: Surface, exe: []const u8, now: i64) void {
+        defer self.windows.endEvent();
+        const app = self.appForClient(exe, s.appId());
+        s.setDark(self.theme.dark);
+        var hs: std.ArrayList(Handle) = .empty;
+        defer hs.deinit(self.gpa);
+        self.windows.handles(&hs, self.gpa) catch {};
+        for (hs.items) |h| {
+            const g = self.windows.acquire(h) orelse continue;
+            defer g.release();
+            const w = g.ptr;
+            if (w.surface != null or !w.waiting or w.app != app) continue;
+            w.surface = s;
+            w.waiting = false;
+            w.status = .{};
+            w.dirty = true;
+            if (w.content.w > 0) s.configure(w.content, self.scale);
+            self.full_redraw = true;
+            return;
+        }
+        self.launch_seq += 1;
+        const h = self.windows.create(.{
+            .app = app,
+            .surface = s,
+            .seq = self.launch_seq,
+            .launch_start = now,
+            .ready_at = now,
+        }) catch {
+            s.destroy();
+            return;
+        };
+        self.openNew(h, app, now) catch {};
+    }
+
+    /// The launcher entry of a client's app; an unknown app gets one of its
+    /// own, hidden from the launcher.
+    fn appForClient(self: *Compositor, exe: []const u8, app_id: []const u8) usize {
+        for (self.installed.entries.items, 0..) |e, i| {
+            if (exe.len > 0 and std.mem.eql(u8, e.key, exe)) return self.apps.len + i;
+        }
+        for (self.installed.entries.items, 0..) |e, i| {
+            if (app_id.len > 0 and std.ascii.eqlIgnoreCase(e.id, app_id)) return self.apps.len + i;
+        }
+        const name = if (app_id.len > 0) app_id else if (exe.len > 0) std.fs.path.basename(exe) else "App";
+        const i = self.installed.addUnlisted(exe, name) catch return 0;
+        self.syncInstalled();
+        return self.apps.len + i;
+    }
+
+    pub fn syncInstalledForTest(self: *Compositor) void {
+        self.syncInstalled();
+    }
+
+    fn appName(self: *const Compositor, app: usize) []const u8 {
+        if (app < self.app_infos.items.len) return self.app_infos.items[app].name;
+        return "";
+    }
+
+    fn appIdOf(self: *const Compositor, app: usize) []const u8 {
+        if (app < self.apps.len) return self.apps[app].app_id;
+        const i = app - self.apps.len;
+        if (i < self.installed.entries.items.len) return self.installed.entries.items[i].id;
+        return "";
+    }
+
+    /// The state a window is shown in, as the app is told it.
+    fn stateOf(self: *const Compositor, h: Handle, w: *const Window) tw.surface.WindowState {
+        const focused = if (self.focused) |f| f.eql(h) else false;
+        const maximized = if (self.maximized) |m| m.eql(h) else false;
+        return .{
+            .focused = focused,
+            .maximized = maximized,
+            .fullscreen = w.fullscreen,
+            .tiled = !maximized and !w.fullscreen,
+        };
+    }
+
+    /// A record from txdesk: the app registry.
+    fn onDeskRecord(self: *Compositor, rec: core.format.Record) void {
+        const res = self.installed.apply(rec) catch return;
+        switch (res) {
+            .none => {},
+            .changed => {
+                if (self.installed.last_save != null) self.apps_asked = false;
+                self.syncInstalled();
+            },
+            .need_snapshot => self.askForApps(),
+        }
+    }
+
+    fn askForApps(self: *Compositor) void {
+        if (self.apps_asked) return;
+        self.apps_asked = true;
+        var rec: std.ArrayList(u8) = .empty;
+        defer rec.deinit(self.gpa);
+        core.format.appendStruct(self.gpa, &rec, core.types.desk_request, 1, core.types.DeskRequest{ .kind = .app_snapshot }, "") catch return;
+        self.publisher.sendControl(rec.items);
+    }
+
+    /// The launcher's entries for the installed apps, after a change.
+    fn syncInstalled(self: *Compositor) void {
+        for (self.installed.entries.items, 0..) |*e, i| {
+            const at = self.apps.len + i;
+            if (at >= self.app_infos.items.len) self.app_infos.append(self.gpa, .{ .name = e.name }) catch return;
+            const info = &self.app_infos.items[at];
+            info.name = e.name;
+            info.hidden = !e.shown();
+            info.missing = e.status == .missing;
+            info.update = e.update;
+        }
+        self.full_redraw = true;
     }
 
     /// Brings a window up wherever it is and shows the way to it: an
@@ -1369,7 +1572,7 @@ pub const Compositor = struct {
         self.preview = null;
         // A window on screen: bring it forward and show where it is.
         if (!self.isShelved(h)) switch (what) {
-            .close => return self.close(h, now),
+            .close => return self.requestClose(h, now),
             .minimize => return self.shelve(h, now),
             .restore => return self.activate(h, from, now),
             .maximize => {
@@ -1382,7 +1585,7 @@ pub const Compositor = struct {
             },
         };
         switch (what) {
-            .close => return self.close(h, now),
+            .close => return self.requestClose(h, now),
             .minimize => return,
             .restore => self.panelClick(h, now),
             .maximize => {
@@ -1611,7 +1814,7 @@ pub const Compositor = struct {
             cv.strokeRoundRect(cur_b, 16, 1, th.get(.border).fade(0.8));
             if (t > 0.9) {
                 var buf: [64]u8 = undefined;
-                const head = std.fmt.bufPrint(&buf, "{s}: {d} windows. Pick one; Esc closes", .{ self.apps[p.app].name, p.n }) catch "";
+                const head = std.fmt.bufPrint(&buf, "{s}: {d} windows. Pick one; Esc closes", .{ self.appName(p.app), p.n }) catch "";
                 _ = cv.text(@floatFromInt(full_b.x + 16), @floatFromInt(full_b.y + 9), head, .{ .size = .small, .weight = .semibold }, th.get(.text));
             }
         }
@@ -1652,7 +1855,7 @@ pub const Compositor = struct {
                 cv.strokeRoundRect(.{ .x = @intFromFloat(c[0] - preview_r), .y = @intFromFloat(c[1] - preview_r), .w = @intFromFloat(2 * preview_r), .h = @intFromFloat(2 * preview_r) }, preview_r, 1, th.get(.border));
                 chrome.drawGlyph(cv, gl, c[0], c[1], preview_r, th.get(if (hot) .accent_text else .text));
             }
-            const title = if (w.surface) |sf| sf.title() else self.apps[w.app].name;
+            const title = if (w.surface) |sf| sf.title() else self.appName(w.app);
             var tb: [48]u8 = undefined;
             const label = if (p.n > 1) (std.fmt.bufPrint(&tb, "{d}. {s} \u{00B7} {s}", .{ i + 1, title, self.whereIs(w) }) catch title) else title;
             const tx: f32 = @as(f32, @floatFromInt(r.x)) + 10 + 4 * (2 * preview_r + 6) + 8;
@@ -1703,7 +1906,7 @@ pub const Compositor = struct {
         var hs: [8]Handle = undefined;
         const n = self.windowsOf(m.app, &hs);
         switch (it) {
-            .close_all => for (hs[0..n]) |h| self.close(h, now),
+            .close_all => for (hs[0..n]) |h| self.requestClose(h, now),
             .minimize_all => for (hs[0..n]) |h| {
                 if (!self.isShelved(h)) self.shelve(h, now);
             },
@@ -1788,7 +1991,7 @@ pub const Compositor = struct {
         cv.fillRoundRect(r, 14, th.get(.surface));
         cv.strokeRoundRect(r, 14, 1, th.get(.border));
         var title_buf: [96]u8 = undefined;
-        const title = std.fmt.bufPrint(&title_buf, "{s}: {d} windows. Pick one", .{ self.apps[c.app].name, c.n }) catch self.apps[c.app].name;
+        const title = std.fmt.bufPrint(&title_buf, "{s}: {d} windows. Pick one", .{ self.appName(c.app), c.n }) catch self.appName(c.app);
         _ = cv.text(@floatFromInt(r.x + Chooser.pad), @floatFromInt(r.y + 12), title, .{ .size = .body, .weight = .semibold }, th.get(.text));
         const hover = c.at(self.px, self.py);
         for (0..c.n + 1) |i| {
@@ -1800,7 +2003,7 @@ pub const Compositor = struct {
                 self.ensureDrawn(g.ptr);
                 cv.fillRect(sr, th.get(.surface_alt));
                 if (g.ptr.pixels.len > 0) cv.blitScaled(g.ptr.pixels, g.ptr.buf_w, g.ptr.buf_h, sr, 255);
-                const name = if (g.ptr.surface) |sf| sf.title() else self.apps[g.ptr.app].name;
+                const name = if (g.ptr.surface) |sf| sf.title() else self.appName(g.ptr.app);
                 var lb: [80]u8 = undefined;
                 const label = std.fmt.bufPrint(&lb, "{d}. {s} \u{00B7} {s}", .{ i + 1, name, self.whereIs(g.ptr) }) catch name;
                 // The window itself is outlined on screen while its
@@ -1884,7 +2087,7 @@ pub const Compositor = struct {
         self.px = x;
         self.py = y;
         if (self.launcher.open) {
-            self.launcher.pointerMotion(self.app_infos, x, y);
+            self.launcher.pointerMotion(self.app_infos.items, x, y);
             self.full_redraw = true;
             return;
         }
@@ -2149,7 +2352,7 @@ pub const Compositor = struct {
             return;
         }
         if (self.launcher.open) {
-            if (button == .left) self.launcherAction(self.launcher.press(self.app_infos, x, y, self.mods.shift), now);
+            if (button == .left) self.launcherAction(self.launcher.press(self.app_infos.items, x, y, self.mods.shift), now);
             return;
         }
         if (self.activeFs()) |fs| {
@@ -2450,7 +2653,7 @@ pub const Compositor = struct {
         var hs: std.ArrayList(Handle) = .empty;
         defer hs.deinit(self.gpa);
         self.windows.handles(&hs, self.gpa) catch return;
-        for (hs.items) |h| self.close(h, now);
+        for (hs.items) |h| self.requestClose(h, now);
     }
 
     fn drawPanelButtons(self: *Compositor, cv: *Canvas, now: i64) void {
@@ -2559,12 +2762,22 @@ pub const Compositor = struct {
                 if (w.surface) |s| {
                     if (s.tick(now)) w.dirty = true;
                     if (s.wantsClose()) to_close = h;
+                    const ws = self.stateOf(h, w);
+                    if (@as(u8, @bitCast(ws)) != w.told_state) {
+                        w.told_state = @bitCast(ws);
+                        s.windowState(ws);
+                    }
                     const st = s.status();
                     if (st.kind != w.status.kind or @abs(st.progress - w.status.progress) > 0.001) {
                         w.status = st;
                         self.publishWindowLocked(h, w, .changed);
                     }
-                } else if (w.ready_at != std.math.maxInt(i64)) {
+                } else if (w.waiting and now - w.launch_start > wait_ms * ms) {
+                    // No window came: the start failed.
+                    w.waiting = false;
+                    w.status = .{ .kind = .failed };
+                    self.publishWindowLocked(h, w, .changed);
+                } else if (w.ready_at != std.math.maxInt(i64) or w.waiting) {
                     // Launch progress: the expected time lands at 75%, then
                     // the bar creeps toward 100% ever more slowly.
                     const t: f32 = @floatFromInt(now - w.launch_start);
@@ -2627,6 +2840,7 @@ pub const Compositor = struct {
         }
 
         if (self.publisher.poll()) self.sendSnapshot();
+        self.publisher.receive(self, onDeskRecord);
         self.publisher.flush();
         self.windows.collect(null);
         return need;
@@ -2668,11 +2882,11 @@ pub const Compositor = struct {
                 const g = self.windows.acquire(h).?;
                 defer g.release();
                 if (self.fs_bar.value(now) > 0.01) {
-                    const title = if (g.ptr.surface) |s| s.title() else self.apps[g.ptr.app].name;
+                    const title = if (g.ptr.surface) |s| s.title() else self.appName(g.ptr.app);
                     const menu = if (g.ptr.surface) |s| s.menu() else &[_][]const u8{};
                     const frame = self.chromeFrame(g.ptr, now);
                     cv.fillRect(frame.translate(0, 3), self.theme.get(.shadow));
-                    chrome.drawTitleBar(cv, &self.theme, frame, self.chromeState(g.ptr, now), title, self.apps[g.ptr.app].name, menu);
+                    chrome.drawTitleBar(cv, &self.theme, frame, self.chromeState(g.ptr, now), title, self.appName(g.ptr.app), menu);
                     self.drawSpaceDots(cv, true, now);
                 }
             }
@@ -2681,7 +2895,7 @@ pub const Compositor = struct {
         self.drawCue(cv, now);
         self.drawChooser(cv);
         self.updateRunning();
-        self.launcher.draw(cv, &self.theme, self.app_infos, now);
+        self.launcher.draw(cv, &self.theme, self.app_infos.items, now);
     }
 
     /// A slow frame (apps redrawing at a new size, many pixels on a HiDPI
@@ -2781,7 +2995,7 @@ pub const Compositor = struct {
         const th = &self.theme;
         const frame = currentFrame(w, now);
         const content = contentRect(frame);
-        const app = self.apps[w.app];
+        const app_name = self.appName(w.app);
 
         if (w.surface) |s| {
             if (w.dirty and w.pixels.len > 0) {
@@ -2797,15 +3011,15 @@ pub const Compositor = struct {
             cv.fillRect(content, th.get(.surface));
             const fade = std.math.clamp(@as(f32, @floatFromInt(now - w.launch_start)) / @as(f32, @floatFromInt(200 * ms)), 0, 1);
             const icon = Rect{ .x = content.x + @divTrunc(content.w - 64, 2), .y = content.y + @divTrunc(content.h, 2) - 60, .w = 64, .h = 64 };
-            chrome.drawAppIcon(cv, th, icon, app.name, .title);
+            chrome.drawAppIcon(cv, th, icon, app_name, .title);
             if (fade < 1) cv.fillRect(icon.inset(-2), th.get(.surface).fade(1 - fade));
             const m = tw.font.Metrics.of(.{ .size = .large }, self.scale);
-            _ = cv.text(@as(f32, @floatFromInt(content.x)) + (@as(f32, @floatFromInt(content.w)) - m.width(app.name)) / 2, @floatFromInt(icon.bottom() + 14), app.name, .{ .size = .large }, th.get(.text_dim).fade(fade));
+            _ = cv.text(@as(f32, @floatFromInt(content.x)) + (@as(f32, @floatFromInt(content.w)) - m.width(app_name)) / 2, @floatFromInt(icon.bottom() + 14), app_name, .{ .size = .large }, th.get(.text_dim).fade(fade));
         }
 
-        const title = if (w.surface) |s| s.title() else app.name;
+        const title = if (w.surface) |s| s.title() else app_name;
         const menu = if (w.surface) |s| s.menu() else &[_][]const u8{};
-        chrome.drawTitleBar(cv, th, frame, self.chromeState(w, now), title, app.name, menu);
+        chrome.drawTitleBar(cv, th, frame, self.chromeState(w, now), title, app_name, menu);
         chrome.drawBorders(cv, th, frame, w.status, now);
     }
 
@@ -2906,7 +3120,7 @@ pub const Compositor = struct {
             // picture; the enlarged view has the title.
             const ic = Rect{ .x = thumb.x - 3, .y = thumb.bottom() + thumb_label - thumb_icon, .w = thumb_icon, .h = thumb_icon };
             cv.fillRoundRect(ic.inset(-2), @as(f32, @floatFromInt(thumb_icon)) * 0.3, th.get(.chrome));
-            chrome.drawAppIcon(cv, th, ic, self.apps[w.app].name, .body);
+            chrome.drawAppIcon(cv, th, ic, self.appName(w.app), .body);
             // Several windows of the app: their number at the top-right.
             if (gr.count > 1) {
                 const bx: f32 = @floatFromInt(thumb.right() - 2);
@@ -2968,7 +3182,7 @@ pub const Compositor = struct {
                 const ghost = Rect{ .x = @as(i32, @intFromFloat(self.px)) - 80, .y = @as(i32, @intFromFloat(self.py)) - 12, .w = 160, .h = 24 };
                 cv.fillRoundRect(ghost, 6, th.get(.chrome_focused).fade(0.95));
                 cv.strokeRoundRect(ghost, 6, 0, th.get(.accent));
-                const title = if (g.ptr.surface) |s| s.title() else self.apps[g.ptr.app].name;
+                const title = if (g.ptr.surface) |s| s.title() else self.appName(g.ptr.app);
                 _ = cv.textEllipsis(@floatFromInt(ghost.x + 10), @floatFromInt(ghost.y + 4), title, 140, .{}, th.get(.text));
             },
             .panel => |d| {
@@ -3010,8 +3224,8 @@ pub const Compositor = struct {
     }
 
     fn sceneRecord(self: *Compositor, out: *std.ArrayList(u8), h: Handle, w: *const Window, kind: core.types.SceneKind) void {
-        const title = if (w.surface) |s| s.title() else self.apps[w.app].name;
-        const app_id = self.apps[w.app].app_id;
+        const title = if (w.surface) |s| s.title() else self.appName(w.app);
+        const app_id = if (w.surface) |s| s.appId() else self.appIdOf(w.app);
         var trail: [512]u8 = undefined;
         const tl = @min(title.len, 256);
         const al = @min(app_id.len, 256);

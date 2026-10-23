@@ -89,7 +89,7 @@ touches. Change the code and this file together.
 
 ## App registry (txdesk)
 
-- `txdesk apps scan` keeps `~/.local/state/tesselix/apps.tslx` (Tesselix
+- txdesk keeps `~/.local/state/tesselix/apps.tslx` (Tesselix
   records `0x05xx`; `txcore/src/types.zig`): the apps, every file the
   scanner has looked at with its size, mtime and inode, and the search
   paths. txdesk is the only writer; a temporary file is renamed over the
@@ -118,9 +118,67 @@ touches. Change the code and this file together.
   `/bin/x` and `/usr/bin/x` both tried); snap and Flatpak by path. snap and
   flatpak themselves are not app keys: their apps are keyed by the path
   that names them (`/snap/bin/chromium`).
+- The running txdesk loads `apps.tslx`, sends the compositor a snapshot
+  when it connects (types `0x0301` DeskApp), scans at start and then every
+  5 minutes, checks apt updates (`apt-cache policy`, no root, no network)
+  at start and every 6 hours, saves when something changed, then sends the
+  changed apps and a `saved` marker with the save count. The compositor
+  keeps a read-only copy (`txcomp/src/apps.zig`); a skipped count makes it
+  ask for a snapshot (`0x0202` DeskRequest). Entries are never removed from
+  the copy, only hidden, so launcher indices stay valid.
+- The launcher shows the installed apps after the built-in ones, with
+  64 px icons for all. Installed apps get a letter tile until icons are
+  decoded (PNG/SVG need a dependency). A ghost is faded with a dashed
+  outline and "not installed" and does not start; an update is an up
+  arrow in a circle on the icon. Running the upgrade waits for a password
+  prompt (polkit).
+- Starting an installed app: the compositor runs its command with
+  `posix_spawnp` (`txcore/src/proc.zig`), field codes dropped, never
+  waiting; SIGCHLD is ignored so children are reaped. Its window opens in
+  Tesselix (see "Wayland server").
+- `run.sh` sets `XDG_SESSION_TYPE=wayland`: Chrome and Electron choose
+  Wayland from it; without it they try X11 and exit (no X server here).
 - Hidden desktop entries that only carry another id (Chrome's
   `com.google.Chrome.desktop`, `NoDisplay=true`) are not read yet; the
   compositor will need them to match a window's Wayland app id.
+
+## Wayland server (txwl)
+
+- Pure Zig on libc sockets (no libwayland): the wire format, fds over
+  SCM_RIGHTS, the peer's pid (SO_PEERCRED; its binary from
+  /proc/<pid>/exe). Builds and tests on macOS with a test client.
+- Globals: wl_compositor 6, wl_subcompositor 1, wl_shm 1 (ARGB8888,
+  XRGB8888), wl_output 4, wl_seat 7 (pointer, keyboard), xdg_wm_base 5,
+  zxdg_decoration_manager_v1 (always server side), wl_data_device_manager 3
+  (accepted, ignored: no clipboard yet), wp_cursor_shape_manager_v1.
+- The compositor decides: configure carries the tile's size and the states
+  (activated, maximized, fullscreen, tiled on all edges); move, resize,
+  maximize and full-screen requests only get the current state back. A
+  frame of another size is cut or padded, never stretched.
+- Shared memory only (no linux-dmabuf): on commit the picture is copied
+  and the buffer released at once; GPU apps fall back to software (Chrome)
+  or do not start (apps that need EGL, such as Alacritty). Subsurfaces are
+  applied at once (no synchronized commits). Popups are placed with the
+  positioner inside the window's content and clipped to it; a click
+  outside a grabbing popup closes the popups. Keyboard focus stays on the
+  window surface (not on grabbing popups).
+- Keymap: the standard US layout by name (includes resolved by the app's
+  libxkbcommon from xkb-data). Keys travel as evdev codes; txsim maps SDL
+  scancodes (`tools/txsim/src/keycodes.zig`). Modifiers come from the
+  input event (Shift, Ctrl, Alt, Super); Caps Lock is not tracked.
+- Windows: a new toplevel is adopted by the compositor on its first
+  commit, matched to the registry by the client's binary, then by app id;
+  an unknown app gets a hidden entry. A launch from the launcher shows a
+  placeholder that the window replaces, failed after 60 s without one.
+  Closing asks the app (xdg_toplevel.close) and the window stays until the
+  app destroys it.
+- Socket `$XDG_RUNTIME_DIR/wayland-tesselix-N` with a lock file per name;
+  apps Tesselix starts get WAYLAND_DISPLAY, XDG_SESSION_TYPE=wayland and no
+  DISPLAY. Tesselix's sockets and received fds are close-on-exec.
+- txsim polls the server: with apps connected the loop wakes every 4 ms.
+  No ping/pong yet (a stuck app is not detected), and a client that
+  shrinks its shared-memory file after creating a pool could fault the
+  compositor (no SIGBUS guard yet).
 
 ## Known limits
 

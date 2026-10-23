@@ -22,6 +22,8 @@ const core = @import("txcore");
 const tw = @import("txwidgets");
 const txcomp = @import("txcomp");
 const controls = @import("controls");
+const txwl = @import("txwl");
+const keycodes = @import("keycodes.zig");
 
 const c = @import("sdl.zig");
 
@@ -157,8 +159,10 @@ fn translate(ev: *const c.Event) ?core.input.Event {
         },
         c.EVENT_KEY_DOWN, c.EVENT_KEY_UP => {
             const k = mapKey(ev.key.key);
-            if (k == .unknown) return null;
-            return .{ .key = .{ .key = k, .pressed = ev.key.down, .mods = mods(), .repeat = ev.key.repeat } };
+            // Every key reaches Wayland apps by its code, named or not.
+            const code = keycodes.evdev(ev.key.scancode);
+            if (k == .unknown and code == 0) return null;
+            return .{ .key = .{ .key = k, .pressed = ev.key.down, .mods = mods(), .repeat = ev.key.repeat, .code = code } };
         },
         c.EVENT_TEXT_INPUT => {
             const p = ev.text.text orelse return null;
@@ -245,6 +249,17 @@ const Clock = struct {
 
     fn now(self: Clock) i64 {
         return @intCast(self.start.durationTo(std.Io.Timestamp.now(self.io, .awake)).nanoseconds);
+    }
+};
+
+/// The Wayland server tells the compositor about new app windows.
+const Adopt = struct {
+    comp: *txcomp.Compositor,
+    clock: Clock,
+
+    fn newWindow(ctx: *anyopaque, s: tw.Surface, info: txwl.WindowInfo) void {
+        const self: *Adopt = @ptrCast(@alignCast(ctx));
+        self.comp.adoptWindow(s, info.exe, self.clock.now());
     }
 };
 
@@ -519,6 +534,27 @@ pub fn main(init: std.process.Init) !void {
     // Otherwise, as after login: a clean desktop with nothing started. The
     // apps are in the launcher.
 
+    // Tesselix as a Wayland server: apps started from the launcher (and
+    // any app given WAYLAND_DISPLAY) open their windows in Tesselix.
+    var adopt: Adopt = .{ .comp = comp, .clock = clock };
+    var child_env: [3][]const u8 = undefined;
+    const wl: ?*txwl.Server = if (opts.snapshot != null) null else txwl.Server.create(gpa) catch |err| blk: {
+        std.log.warn("no Wayland server: {s}", .{@errorName(err)});
+        break :blk null;
+    };
+    defer if (wl) |w| w.destroy();
+    if (wl) |w| {
+        w.hooks = .{ .ctx = &adopt, .new_window = Adopt.newWindow };
+        w.setOutput(screen.lw, screen.lh, screen.scale);
+        child_env = .{
+            try std.fmt.allocPrint(init.arena.allocator(), "WAYLAND_DISPLAY={s}", .{w.displayName()}),
+            "XDG_SESSION_TYPE=wayland",
+            "DISPLAY",
+        };
+        comp.setChildEnv(&child_env);
+        std.log.info("Wayland server: {s}", .{w.displayName()});
+    }
+
     // Same order as core.input.Cursor.
     var cursors: [6]?*c.Cursor = .{
         c.SDL_CreateSystemCursor(.default),
@@ -552,13 +588,18 @@ pub fn main(init: std.process.Init) !void {
         if (quit_signal.load(.monotonic)) break;
         var ev: c.Event = undefined;
         // Scripted runs poll, so steps fire on time.
-        const timeout: i32 = if (need or opts.snapshot != null) 1 else 250;
+        // Apps connected: wake often, their requests wait for the loop.
+        const apps_on = if (wl) |w| w.clientCount() > 0 else false;
+        const timeout: i32 = if (need or opts.snapshot != null) 1 else if (apps_on) 4 else 250;
         var got = c.SDL_WaitEventTimeout(&ev, timeout);
         while (got) : (got = c.SDL_PollEvent(&ev)) {
             const now = clock.now();
             if (ev.type == c.EVENT_QUIT) running = false;
             if (ev.type == c.EVENT_WINDOW_RESIZED or ev.type == c.EVENT_WINDOW_PIXEL_SIZE_CHANGED or ev.type == c.EVENT_WINDOW_DISPLAY_SCALE_CHANGED) {
-                if (try screen.update(gpa, window, renderer)) comp.setScreen(.{ .w = screen.lw, .h = screen.lh }, screen.scale, now);
+                if (try screen.update(gpa, window, renderer)) {
+                    comp.setScreen(.{ .w = screen.lw, .h = screen.lh }, screen.scale, now);
+                    if (wl) |w| w.setOutput(screen.lw, screen.lh, screen.scale);
+                }
                 need = true;
             }
             if (opts.snapshot != null) continue; // scripted runs ignore real input
@@ -575,6 +616,7 @@ pub fn main(init: std.process.Init) !void {
             need = true;
         }
 
+        if (wl) |w| w.dispatch();
         comp.setClock(clockText(&clock_buf));
         if (comp.tick(now)) need = true;
 
@@ -598,12 +640,16 @@ pub fn main(init: std.process.Init) !void {
                 if (last_present >= 0 and tp - last_present <= txcomp.FramePace.idle_gap) interval_hist.record(tp - last_present);
                 last_present = tp;
                 if (presented == 1) std.log.info("first frame presented", .{});
+                if (wl) |w| w.presented(@truncate(@as(u64, @intCast(tp)) / ms));
             } else sdlFailed("SDL_RenderPresent", &sdl_errors);
             frame_hist.record(t1 - t0);
             if (pending_input) |t| latency_hist.record(clock.now() - t);
             pending_input = null;
             need = false;
         }
+
+        // Events for apps (input, configure) go out now.
+        if (wl) |w| w.flush();
 
         if (opts.snapshot) |path| {
             if (now >= sc.end * ms) {

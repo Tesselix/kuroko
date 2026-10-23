@@ -91,7 +91,9 @@ pub const Event = union(enum) {
     pointer_button: struct { button: Button, pressed: bool, x: f32, y: f32, mods: Mods = .{} },
     pointer_leave,
     wheel: Wheel,
-    key: struct { key: Key, pressed: bool, mods: Mods, repeat: bool = false },
+    /// `code` is the Linux (evdev) key code, 0 when unknown: Wayland apps
+    /// get every key by its code and make text with their keymap.
+    key: struct { key: Key, pressed: bool, mods: Mods, repeat: bool = false, code: u16 = 0 },
     text: Text,
 };
 

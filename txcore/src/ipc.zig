@@ -63,6 +63,12 @@ pub fn setNonBlocking(fd: Fd) !void {
     if (c.fcntl(fd, c.F.SETFL, v) < 0) return error.SystemError;
 }
 
+/// Not inherited by programs this process starts: an app holding another
+/// app's socket would keep it open after that app is gone.
+pub fn setCloexec(fd: Fd) void {
+    _ = c.fcntl(fd, c.F.SETFD, @as(c_int, c.FD_CLOEXEC));
+}
+
 /// Writing to a socket whose peer died must return an error, never kill
 /// the compositor with SIGPIPE.
 pub fn ignoreSigpipe() void {
@@ -93,6 +99,7 @@ pub fn listen(path: []const u8) !Fd {
     if (c.bind(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.un)) != 0) return error.SystemError;
     if (c.listen(fd, 8) != 0) return error.SystemError;
     try setNonBlocking(fd);
+    setCloexec(fd);
     return fd;
 }
 
@@ -106,6 +113,7 @@ pub fn acceptNonBlocking(fd: Fd) !?Fd {
         };
     }
     try setNonBlocking(conn);
+    setCloexec(conn);
     return conn;
 }
 
@@ -115,6 +123,7 @@ pub fn connect(path: []const u8) !Fd {
     if (fd < 0) return error.SystemError;
     errdefer close(fd);
     if (c.connect(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.un)) != 0) return error.SystemError;
+    setCloexec(fd);
     return fd;
 }
 
@@ -143,6 +152,14 @@ pub fn read(fd: Fd, buf: []u8) Error!usize {
             else => return error.SystemError,
         }
     }
+}
+
+/// Waits up to `timeout_ms` for `fd` to be readable (or closed). True when
+/// a read will not block.
+pub fn waitReadable(fd: Fd, timeout_ms: i32) bool {
+    var fds = [_]c.pollfd{.{ .fd = fd, .events = c.POLL.IN, .revents = 0 }};
+    const n = c.poll(&fds, 1, timeout_ms);
+    return n > 0;
 }
 
 pub fn close(fd: Fd) void {

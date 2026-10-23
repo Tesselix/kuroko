@@ -11,6 +11,7 @@ pub const wheel = @import("wheel.zig");
 pub const metrics = @import("metrics.zig");
 pub const types = @import("types.zig");
 pub const ipc = @import("ipc.zig");
+pub const proc = @import("proc.zig");
 
 pub const Handle = registry.Handle;
 pub const Registry = registry.Registry;

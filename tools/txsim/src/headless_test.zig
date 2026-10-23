@@ -461,3 +461,111 @@ test "login start: apps launch into the panel, the desktop stays clean" {
     try std.testing.expectEqual(@as(usize, 1), comp.counts().tiled);
     try std.testing.expectEqual(@as(usize, 2), comp.counts().shelved);
 }
+
+fn deskApp(gpa: std.mem.Allocator, out: *std.ArrayList(u8), kind: core.types.DeskAppKind, status: core.types.AppStatus, flags: u8, strings: []const []const u8, exec: []const []const u8) !void {
+    var extra: std.ArrayList(u8) = .empty;
+    defer extra.deinit(gpa);
+    if (kind == .app) {
+        // key, id, name, icon, exec, version, available_version
+        for (strings[0..4]) |s| try core.format.appendString(gpa, &extra, s);
+        try core.format.appendStringList(gpa, &extra, exec);
+        for (strings[4..6]) |s| try core.format.appendString(gpa, &extra, s);
+    }
+    try core.format.appendStruct(gpa, out, core.types.desk_app, 1, core.types.DeskApp{
+        .kind = kind,
+        .status = status,
+        .flags = flags,
+        .string_count = if (kind == .app) 7 else 0,
+        .save_count = 3,
+    }, extra.items);
+}
+
+test "installed apps from txdesk appear in the launcher and start" {
+    const gpa = std.testing.allocator;
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+
+    // txdesk's side of the socket.
+    var path_buf: [512]u8 = undefined;
+    const path = try core.ipc.socketPath(&path_buf, core.ipc.compositor_socket);
+    const fd = core.ipc.connect(path) catch return error.SkipZigTest; // no socket here
+    defer core.ipc.close(fd);
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try deskApp(gpa, &out, .snapshot_begin, .installed, 0, &.{}, &.{});
+    try deskApp(gpa, &out, .app, .installed, core.types.desk_app_update, &.{ "/bin/sh", "sh", "Shell", "", "1.0", "2.0" }, &.{ "/bin/sh", "-c", "exit 0", "%U" });
+    try deskApp(gpa, &out, .app, .missing, 0, &.{ "/usr/bin/gone", "gone", "Gone", "", "1.0", "" }, &.{"/usr/bin/gone"});
+    try deskApp(gpa, &out, .snapshot_end, .installed, 0, &.{}, &.{});
+    _ = try core.ipc.write(fd, out.items);
+
+    var now: i64 = 0;
+    var tries: usize = 0;
+    while (comp.app_infos.items.len < apps.len + 2 and tries < 200) : (tries += 1) {
+        _ = comp.tick(now);
+        now += 16 * ms;
+    }
+    try std.testing.expectEqual(apps.len + 2, comp.app_infos.items.len);
+    const shell_app = comp.app_infos.items[apps.len];
+    try std.testing.expectEqualStrings("Shell", shell_app.name);
+    try std.testing.expect(shell_app.update and !shell_app.missing and !shell_app.hidden);
+    try std.testing.expect(comp.app_infos.items[apps.len + 1].missing);
+
+    // Starting it runs the command (field codes dropped) and remembers it.
+    comp.launcherAction(.{ .launch = .{ .app = apps.len, .from = .{} } }, now);
+    try std.testing.expectEqual(apps.len, comp.recent.items[0]);
+    // A ghost does not start.
+    comp.launcherAction(.{ .launch = .{ .app = apps.len + 1, .from = .{} } }, now);
+    try std.testing.expectEqual(apps.len, comp.recent.items[0]);
+
+    // The launcher shows both, and draws.
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = true, .x = 16, .y = 14 } }, now);
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = false, .x = 16, .y = 14 } }, now);
+    try std.testing.expect(comp.launcher.open);
+    try std.testing.expectEqual(apps.len + 2, comp.launcher.order_len);
+    const px = try gpa.alloc(u32, 1440 * 900);
+    defer gpa.free(px);
+    var cv = tw.Canvas.init(px, 1440, 900, 1440, 1);
+    comp.render(&cv, now + 300 * ms);
+}
+
+test "an app's window takes its launch placeholder; an unknown app gets a tile" {
+    const gpa = std.testing.allocator;
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+
+    // The registry knows one installed app.
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try deskApp(gpa, &out, .snapshot_begin, .installed, 0, &.{}, &.{});
+    try deskApp(gpa, &out, .app, .installed, 0, &.{ "/bin/sh", "sh", "Shell", "", "1.0", "" }, &.{ "/bin/sh", "-c", "exit 0" });
+    try deskApp(gpa, &out, .snapshot_end, .installed, 0, &.{}, &.{});
+    var reader = core.format.Reader.init(out.items, &core.types.known);
+    while (reader.next()) |rec| _ = try comp.installed.apply(rec);
+    comp.syncInstalledForTest();
+
+    var now: i64 = 0;
+    comp.launcherAction(.{ .launch = .{ .app = apps.len, .from = .{} } }, now);
+    try std.testing.expectEqual(@as(usize, 1), comp.tiles.items.len);
+    for (0..10) |_| {
+        _ = comp.tick(now);
+        now += 16 * ms;
+    }
+
+    // Its window arrives: same tile, no second window.
+    const s1 = try controls.createStopwatch(gpa);
+    comp.adoptWindow(s1, "/bin/sh", now);
+    try std.testing.expectEqual(@as(usize, 1), comp.tiles.items.len);
+    _ = comp.tick(now);
+
+    // A window of an app the registry does not know: a tile of its own.
+    const s2 = try controls.createStopwatch(gpa);
+    comp.adoptWindow(s2, "/usr/local/bin/unknown-app", now);
+    try std.testing.expectEqual(@as(usize, 2), comp.tiles.items.len);
+    try std.testing.expect(comp.app_infos.items[comp.app_infos.items.len - 1].hidden);
+    _ = comp.tick(now + 300 * ms);
+}
+
+test {
+    _ = @import("keycodes.zig");
+}

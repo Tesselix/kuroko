@@ -184,6 +184,12 @@ pub const AppInfo = struct {
     name: []const u8,
     /// Open windows of this app (the launcher shows a dot under it).
     running: u8 = 0,
+    /// Not shown: an installed app that left the registry.
+    hidden: bool = false,
+    /// Uninstalled: shown as a ghost (faded, dashed outline), not started.
+    missing: bool = false,
+    /// A newer version is available: an up-arrow badge on the icon.
+    update: bool = false,
 };
 
 pub const Launcher = struct {
@@ -198,11 +204,14 @@ pub const Launcher = struct {
     predicted: [4]usize = undefined,
     predicted_len: usize = 0,
     /// Alphabetical order of apps, stable.
-    order: [32]usize = undefined,
+    order: [96]usize = undefined,
     order_len: usize = 0,
 
     const tile_w = 124;
-    const tile_h = 100;
+    const tile_h = 116;
+    /// App icons are at least 64 px, so badges fit on them.
+    const icon_px = 64;
+    const max_tiles = 4 + 96;
 
     pub fn show(self: *Launcher, screen: Rect, px: f32, py: f32, apps: []const AppInfo, recent: []const usize, now: i64) void {
         self.open = true;
@@ -218,11 +227,17 @@ pub const Launcher = struct {
         self.predicted_len = 0;
         for (recent) |a| {
             if (self.predicted_len == self.predicted.len) break;
+            if (a >= apps.len or apps[a].hidden or apps[a].missing) continue;
             self.predicted[self.predicted_len] = a;
             self.predicted_len += 1;
         }
-        self.order_len = @min(apps.len, self.order.len);
-        for (0..self.order_len) |i| self.order[i] = i;
+        self.order_len = 0;
+        for (apps, 0..) |a, i| {
+            if (a.hidden) continue;
+            if (self.order_len == self.order.len) break;
+            self.order[self.order_len] = i;
+            self.order_len += 1;
+        }
         std.mem.sort(usize, self.order[0..self.order_len], apps, struct {
             fn lt(a: []const AppInfo, x: usize, y: usize) bool {
                 return std.ascii.lessThanIgnoreCase(a[x].name, a[y].name);
@@ -285,7 +300,7 @@ pub const Launcher = struct {
     pub const Action = union(enum) { none, close, launch: Launch };
 
     fn iconRect(tile: Tile) Rect {
-        return .{ .x = tile.rect.x + @divTrunc(tile.w() - 48, 2), .y = tile.rect.y + 10, .w = 48, .h = 48 };
+        return .{ .x = tile.rect.x + @divTrunc(tile.w() - icon_px, 2), .y = tile.rect.y + 10, .w = icon_px, .h = icon_px };
     }
 
     /// "New window" badge on a running app's tile: a "+" at the icon's
@@ -298,24 +313,25 @@ pub const Launcher = struct {
     pub fn pointerMotion(self: *Launcher, apps: []const AppInfo, x: f32, y: f32) void {
         // No accidental hover: highlights wait until the pointer moves.
         self.pointer_moved = true;
-        var buf: [40]Tile = undefined;
+        var buf: [max_tiles]Tile = undefined;
         const n = self.tiles(apps, &buf);
         self.hover = null;
         for (buf[0..n]) |t| {
-            if (!t.ghost and t.rect.contains(x, y)) self.hover = t.app;
+            if (!t.ghost and !apps[t.app].missing and t.rect.contains(x, y)) self.hover = t.app;
         }
     }
 
     pub fn press(self: *Launcher, apps: []const AppInfo, x: f32, y: f32, shift: bool) Action {
         if (!self.rect.contains(x, y)) return .close;
-        var buf: [40]Tile = undefined;
+        var buf: [max_tiles]Tile = undefined;
         const n = self.tiles(apps, &buf);
         for (buf[0..n]) |t| {
             if (t.ghost) continue;
             if (apps[t.app].running > 0 and newBadge(t).contains(x, y)) return .{ .launch = .{ .app = t.app, .from = iconRect(t), .new = true } };
         }
         for (buf[0..n]) |t| {
-            if (!t.ghost and t.rect.contains(x, y)) return .{ .launch = .{ .app = t.app, .from = iconRect(t), .new = shift } };
+            // A ghost cannot be started.
+            if (!t.ghost and !apps[t.app].missing and t.rect.contains(x, y)) return .{ .launch = .{ .app = t.app, .from = iconRect(t), .new = shift } };
         }
         return .none;
     }
@@ -334,10 +350,10 @@ pub const Launcher = struct {
                 return .none;
             },
             .enter => {
-                var buf: [40]Tile = undefined;
+                var buf: [max_tiles]Tile = undefined;
                 const n = self.tiles(apps, &buf);
                 for (buf[0..n]) |t| {
-                    if (!t.ghost) return .{ .launch = .{ .app = t.app, .from = iconRect(t), .new = shift } };
+                    if (!t.ghost and !apps[t.app].missing) return .{ .launch = .{ .app = t.app, .from = iconRect(t), .new = shift } };
                 }
                 return .none;
             },
@@ -377,7 +393,7 @@ pub const Launcher = struct {
             _ = cv.text(@floatFromInt(r.x + @divTrunc(r.w, 2) - 70), @floatFromInt(r.y + 32), "Type to filter", .{ .size = .body }, th.get(.text_dim).fade(t * 0.7));
         }
 
-        var buf: [40]Tile = undefined;
+        var buf: [max_tiles]Tile = undefined;
         const n = self.tiles(apps, &buf);
         if (self.predicted_len > 0) {
             _ = cv.text(@floatFromInt(buf[0].rect.x + 8), @floatFromInt(buf[0].rect.y - 22), "MOST PROBABLE", head, th.get(.text_dim).fade(t));
@@ -391,14 +407,40 @@ pub const Launcher = struct {
             if (!tile.ghost) all_ghost = false;
         }
         for (buf[0..n]) |tile| {
-            const a: f32 = if (tile.ghost) 0.18 else 1.0;
+            const info = apps[tile.app];
+            const a: f32 = if (tile.ghost) 0.18 else if (info.missing) 0.45 else 1.0;
             const hovered = self.pointer_moved and self.hover == tile.app and !tile.ghost;
             if (hovered) cv.fillRoundRect(tile.rect.inset(6), 10, th.get(.accent).fade(0.12 * t));
             const icon = iconRect(tile);
-            if (a > 0.5) chrome.drawAppIcon(cv, th, icon, apps[tile.app].name, .title) else cv.fillRoundRect(icon, 11, th.get(.text_dim).fade(0.15 * t));
+            if (tile.ghost) {
+                cv.fillRoundRect(icon, 15, th.get(.text_dim).fade(0.15 * t));
+            } else if (info.missing) {
+                // Uninstalled: a faded tile in a dashed outline.
+                cv.fillRoundRect(icon, 15, th.get(.text_dim).fade(0.25 * t));
+                cv.dashedRect(icon.inset(-4), 1, 5, 4, th.get(.text_dim).fade(t));
+            } else {
+                chrome.drawAppIcon(cv, th, icon, info.name, .title);
+            }
             const m = font.Metrics.of(.{}, cv.scale);
-            const nw = @min(m.width(apps[tile.app].name), @as(f32, tile_w - 12));
-            _ = cv.textEllipsis(@as(f32, @floatFromInt(tile.rect.x)) + (@as(f32, tile_w) - nw) / 2, @floatFromInt(tile.rect.y + 66), apps[tile.app].name, tile_w - 12, .{}, th.get(.text).fade(t * a));
+            const nw = @min(m.width(info.name), @as(f32, tile_w - 12));
+            _ = cv.textEllipsis(@as(f32, @floatFromInt(tile.rect.x)) + (@as(f32, tile_w) - nw) / 2, @floatFromInt(tile.rect.y + 80), info.name, tile_w - 12, .{}, th.get(.text).fade(t * a));
+            if (info.missing and !tile.ghost) {
+                const note = "not installed";
+                const sm = font.Metrics.of(.{ .size = .small }, cv.scale);
+                _ = cv.text(@as(f32, @floatFromInt(tile.rect.x)) + (@as(f32, tile_w) - sm.width(note)) / 2, @floatFromInt(tile.rect.y + 97), note, .{ .size = .small }, th.get(.text_dim).fade(t));
+            }
+            // A newer version: an up arrow in a circle at the top right.
+            if (info.update and !tile.ghost and !(hovered and info.running > 0)) {
+                const b = newBadge(tile);
+                const bx: f32 = @as(f32, @floatFromInt(b.x)) + 11;
+                const by: f32 = @as(f32, @floatFromInt(b.y)) + 11;
+                cv.fillCircle(bx, by, 12, th.get(.surface).fade(t));
+                cv.fillCircle(bx, by, 11, th.get(.accent).fade(t));
+                const fg = th.get(.accent_text).fade(t);
+                cv.line(bx, by + 5, bx, by - 5, 2, fg);
+                cv.line(bx - 4.5, by - 0.5, bx, by - 5, 2, fg);
+                cv.line(bx + 4.5, by - 0.5, bx, by - 5, 2, fg);
+            }
             // Running and hovered: the "+" badge opens a new window.
             if (hovered and apps[tile.app].running > 0) {
                 const b = newBadge(tile);
@@ -412,7 +454,7 @@ pub const Launcher = struct {
             const running = apps[tile.app].running;
             if (running > 0) {
                 const cx: f32 = @as(f32, @floatFromInt(tile.rect.x)) + tile_w / 2.0;
-                const dy: f32 = @floatFromInt(tile.rect.y + 92);
+                const dy: f32 = @floatFromInt(tile.rect.y + 106);
                 const col = th.get(.accent).fade(t * a);
                 if (running == 1) {
                     cv.fillCircle(cx, dy, 3, col);

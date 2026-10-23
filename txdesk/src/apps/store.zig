@@ -130,19 +130,24 @@ pub const Store = struct {
 
         for (self.apps.items) |a| {
             extra.clearRetainingCapacity();
-            const strings = [_]Field{
-                .{ .one = a.id },           .{ .one = a.name },    .{ .one = a.binary },
-                .{ .list = a.exec },        .{ .one = a.icon },    .{ .one = a.desktop_entry },
-                .{ .list = a.groups },      .{ .list = a.evidence }, .{ .one = a.package },
-                .{ .one = a.version },      .{ .one = a.available_version },
-            };
-            comptime std.debug.assert(strings.len == @typeInfo(types.AppString).@"enum".fields.len);
-            for (strings) |f| try f.write(gpa, &extra);
+            // In types.AppString order.
+            try format.appendString(gpa, &extra, a.id);
+            try format.appendString(gpa, &extra, a.name);
+            try format.appendString(gpa, &extra, a.binary);
+            try format.appendStringList(gpa, &extra, a.exec);
+            try format.appendString(gpa, &extra, a.icon);
+            try format.appendString(gpa, &extra, a.desktop_entry);
+            try format.appendStringList(gpa, &extra, a.groups);
+            try format.appendStringList(gpa, &extra, a.evidence);
+            try format.appendString(gpa, &extra, a.package);
+            try format.appendString(gpa, &extra, a.version);
+            try format.appendString(gpa, &extra, a.available_version);
+            const string_count = @typeInfo(types.AppString).@"enum".fields.len;
             try format.appendStruct(gpa, &out, types.app_entry, 1, types.AppEntry{
                 .status = a.status,
                 .display = a.display,
                 .manager = a.manager,
-                .string_count = strings.len,
+                .string_count = string_count,
                 .binary_size = a.binary_stat.size,
                 .binary_mtime_ns = a.binary_stat.mtime_ns,
                 .binary_inode = a.binary_stat.inode,
@@ -191,7 +196,7 @@ pub const Store = struct {
                 },
                 types.app_entry => {
                     const e = format.readStruct(types.AppEntry, rec);
-                    var r: StringReader = .{ .bytes = format.trailing(types.AppEntry, rec), .left = e.string_count };
+                    var r: format.StringReader = .{ .bytes = format.trailing(types.AppEntry, rec), .left = e.string_count };
                     const a: App = .{
                         .status = e.status,
                         .display = e.display,
@@ -199,17 +204,17 @@ pub const Store = struct {
                         .binary_stat = .{ .size = e.binary_size, .mtime_ns = e.binary_mtime_ns, .inode = e.binary_inode },
                         .missing_since_s = e.missing_since_s,
                         .first_seen_s = e.first_seen_s,
-                        .id = try self.dupe(r.one()),
-                        .name = try self.dupe(r.one()),
-                        .binary = try self.dupe(r.one()),
-                        .exec = try self.splitList(r.one()),
-                        .icon = try self.dupe(r.one()),
-                        .desktop_entry = try self.dupe(r.one()),
-                        .groups = try self.splitList(r.one()),
-                        .evidence = try self.splitList(r.one()),
-                        .package = try self.dupe(r.one()),
-                        .version = try self.dupe(r.one()),
-                        .available_version = try self.dupe(r.one()),
+                        .id = try self.dupe(r.next()),
+                        .name = try self.dupe(r.next()),
+                        .binary = try self.dupe(r.next()),
+                        .exec = try self.splitList(r.next()),
+                        .icon = try self.dupe(r.next()),
+                        .desktop_entry = try self.dupe(r.next()),
+                        .groups = try self.splitList(r.next()),
+                        .evidence = try self.splitList(r.next()),
+                        .package = try self.dupe(r.next()),
+                        .version = try self.dupe(r.next()),
+                        .available_version = try self.dupe(r.next()),
                     };
                     if (r.bad or a.binary.len == 0) {
                         log.note(.truncated);
@@ -261,57 +266,6 @@ pub const Store = struct {
         var it = std.mem.splitScalar(u8, joined, 0);
         while (it.next()) |s| try items.append(self.allocator(), try self.dupe(s));
         return items.toOwnedSlice(self.allocator());
-    }
-};
-
-const Field = union(enum) {
-    one: []const u8,
-    list: []const []const u8,
-
-    fn write(self: Field, gpa: std.mem.Allocator, out: *std.ArrayList(u8)) !void {
-        var len: usize = 0;
-        switch (self) {
-            .one => |s| len = s.len,
-            .list => |l| for (l, 0..) |s, i| {
-                len += s.len + @intFromBool(i > 0);
-            },
-        }
-        if (len > std.math.maxInt(u16)) return error.StringTooLong;
-        var n: [2]u8 = undefined;
-        std.mem.writeInt(u16, &n, @intCast(len), .little);
-        try out.appendSlice(gpa, &n);
-        switch (self) {
-            .one => |s| try out.appendSlice(gpa, s),
-            .list => |l| for (l, 0..) |s, i| {
-                if (i > 0) try out.append(gpa, 0);
-                try out.appendSlice(gpa, s);
-            },
-        }
-    }
-};
-
-const StringReader = struct {
-    bytes: []const u8,
-    left: u32,
-    bad: bool = false,
-
-    /// The next string, or "" when the record has fewer (an older writer).
-    fn one(self: *StringReader) []const u8 {
-        if (self.left == 0) return "";
-        self.left -= 1;
-        if (self.bytes.len < 2) {
-            self.bad = true;
-            return "";
-        }
-        const n = std.mem.readInt(u16, self.bytes[0..2], .little);
-        if (self.bytes.len - 2 < n) {
-            self.bad = true;
-            self.bytes = &.{};
-            return "";
-        }
-        const s = self.bytes[2..][0..n];
-        self.bytes = self.bytes[2 + n ..];
-        return s;
     }
 };
 

@@ -53,6 +53,16 @@ pub fn build(b: *std.Build) void {
             .{ .name = "txwidgets", .module = widgets },
         },
     });
+    const wl = b.addModule("txwl", .{
+        .root_source_file = b.path("txwl/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "txcore", .module = core },
+            .{ .name = "txwidgets", .module = widgets },
+        },
+    });
     const controls = b.addModule("controls", .{
         .root_source_file = b.path("apps/controls/src/root.zig"),
         .target = target,
@@ -88,7 +98,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    for ([_]*std.Build.Module{ core, widgets, comp, controls, headless, stub_test, apps_test }) |m| {
+    for ([_]*std.Build.Module{ core, widgets, comp, wl, controls, headless, stub_test, apps_test }) |m| {
         const t = b.addTest(.{ .root_module = m });
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
@@ -123,6 +133,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "txwidgets", .module = widgets },
                 .{ .name = "txcomp", .module = comp },
                 .{ .name = "controls", .module = controls },
+                .{ .name = "txwl", .module = wl },
             },
         });
         // SDL3 is declared by hand in tools/txsim/src/sdl.zig (no C headers

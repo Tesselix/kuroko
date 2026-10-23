@@ -76,6 +76,10 @@ esac
 # GLSL 1.30, but virgl in UTM offers desktop GL only up to GLSL 1.20 (and
 # GLSL ES 3.00). Override by setting SDL_RENDER_DRIVER yourself.
 export SDL_RENDER_DRIVER="${SDL_RENDER_DRIVER:-opengles2,software}"
+# A Wayland session: apps that pick their display protocol at run time
+# read this (Chrome and Electron fall back to X11 without it, and there is
+# no X server here).
+export XDG_SESSION_TYPE=wayland
 # Keep Tesselix's own sockets in the user's runtime dir.
 if [ -z "$XDG_RUNTIME_DIR" ] && [ -d "/run/user/$(id -u)" ]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"
