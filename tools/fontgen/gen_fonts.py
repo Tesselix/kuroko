@@ -7,6 +7,10 @@ masks at fixed physical pixel sizes, one record per file.
 
 Usage:
     python3 tools/fontgen/gen_fonts.py REGULAR.otf SEMIBOLD.otf OUT_DIR
+    python3 tools/fontgen/gen_fonts.py --hebrew REGULAR.ttf SEMIBOLD.ttf OUT_DIR
+
+The first renders the UI font (Inter). The second renders the Hebrew
+fallback atlases (Noto Sans Hebrew), used for what the UI font lacks.
 
 Needs Pillow and fontTools. The output is committed, so building Tesselix
 does not need Python.
@@ -46,9 +50,19 @@ def record(type_id: int, version: int, payload: bytes) -> bytes:
     return head + payload + b"\0" * pad
 
 
-def build(path: str, weight: int, px: int) -> bytes:
+# Hebrew letters and punctuation, and the shekel sign.
+HEBREW = [0x05BE, 0x05C0, 0x05C3, 0x05C6] + list(range(0x05D0, 0x05EB)) + \
+    list(range(0x05EF, 0x05F5)) + [0x20AA]
+# Points and cantillation marks: placing them over their letter needs
+# shaping, which the atlases do not have yet. They are kept as empty,
+# zero-width glyphs so they vanish instead of showing as '?'.
+HEBREW_MARKS = [c for c in range(0x0591, 0x05C8) if c not in HEBREW]
+
+
+def build(path: str, weight: int, px: int, ui: bool = True) -> bytes:
     cmap = TTFont(path).getBestCmap()
-    cps = [c for c in list(range(32, 127)) + EXTRA if c in cmap]
+    wanted = list(range(32, 127)) + EXTRA if ui else HEBREW + HEBREW_MARKS
+    cps = sorted(c for c in wanted if c in cmap)
     font = ImageFont.truetype(path, px)
     ascent, descent = font.getmetrics()
     line_height = round((ascent + descent) * 1.2)
@@ -57,6 +71,9 @@ def build(path: str, weight: int, px: int) -> bytes:
     bitmap = bytearray()
     for cp in cps:
         ch = chr(cp)
+        if cp in HEBREW_MARKS:
+            glyphs.append(struct.pack("<IHBBbbHI", cp, 0, 0, 0, 0, 0, 0, len(bitmap)))
+            continue
         advance = round(font.getlength(ch) * 64)
         mask, (ox, oy) = font.getmask2(ch, mode="L")
         w, h = mask.size
@@ -74,11 +91,16 @@ def build(path: str, weight: int, px: int) -> bytes:
 
 
 def main() -> None:
-    regular, semibold, out = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+    args = sys.argv[1:]
+    ui = args[0] != "--hebrew"
+    if not ui:
+        args = args[1:]
+    regular, semibold, out = args[0], args[1], Path(args[2])
+    prefix = "" if ui else "hebrew-"
     out.mkdir(parents=True, exist_ok=True)
-    for name, path, weight in (("regular", regular, 400), ("semibold", semibold, 600)):
+    for name, path, weight in ((prefix + "regular", regular, 400), (prefix + "semibold", semibold, 600)):
         for px in SIZES:
-            data = build(path, weight, px)
+            data = build(path, weight, px, ui)
             (out / f"{name}-{px}.tslx").write_bytes(data)
             print(f"{name}-{px}.tslx {len(data)} bytes")
 

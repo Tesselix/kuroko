@@ -13,6 +13,8 @@ pub const types = @import("types.zig");
 pub const ipc = @import("ipc.zig");
 pub const proc = @import("proc.zig");
 pub const trust = @import("trust.zig");
+pub const influence = @import("influence.zig");
+pub const icons = @import("icons.zig");
 
 pub const Handle = registry.Handle;
 pub const Registry = registry.Registry;

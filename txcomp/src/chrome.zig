@@ -142,7 +142,7 @@ fn menuLimit(frame: Rect, menu_t: f32) f32 {
     return third + @max(0, full - third) * menu_t;
 }
 
-pub fn drawTitleBar(cv: *Canvas, th: *const Theme, frame: Rect, st: State, title: []const u8, app_name: []const u8, menu: []const []const u8) void {
+pub fn drawTitleBar(cv: *Canvas, th: *const Theme, frame: Rect, st: State, title: []const u8, app_name: []const u8, icon: Icon, menu: []const []const u8) void {
     const bar = Rect{ .x = frame.x, .y = frame.y, .w = frame.w, .h = title_h };
     cv.fillRect(bar, th.get(if (st.focused) .chrome_focused else .chrome));
     if (st.elevated) cv.fillRect(.{ .x = bar.x, .y = bar.y, .w = bar.w, .h = 3 }, th.get(.danger));
@@ -156,7 +156,7 @@ pub fn drawTitleBar(cv: *Canvas, th: *const Theme, frame: Rect, st: State, title
     const old = cv.pushClip(bar);
     defer cv.popClip(old);
 
-    drawAppIcon(cv, th, .{ .x = frame.x + icon_x, .y = frame.y + (title_h - icon_size) / 2, .w = icon_size, .h = icon_size }, app_name, .small);
+    drawAppIcon(cv, th, .{ .x = frame.x + icon_x, .y = frame.y + (title_h - icon_size) / 2, .w = icon_size, .h = icon_size }, app_name, .small, icon);
 
     // Title, centered; hidden while the menu takes over the bar.
     const title_style: font.Style = .{ .size = .body, .weight = if (st.focused) .semibold else .regular };
@@ -294,7 +294,18 @@ fn ringCircle(cv: *Canvas, cx: f32, cy: f32, r: f32, c: core.Color) void {
 }
 
 /// App icon placeholder: a rounded square with the first letter.
-pub fn drawAppIcon(cv: *Canvas, th: *const Theme, r: Rect, name: []const u8, size: font.Size) void {
+/// An app's icon as pixels (from txdesk's icons.tslx), at two sizes.
+pub const Icon = struct {
+    small: ?tw.Image = null,
+    large: ?tw.Image = null,
+};
+
+/// The app's icon; without one, a tile with its first letter.
+pub fn drawAppIcon(cv: *Canvas, th: *const Theme, r: Rect, name: []const u8, size: font.Size, icon: Icon) void {
+    // The smaller image that still covers the rect's physical pixels.
+    const want = r.w * cv.scale;
+    const img = if (icon.small) |s| (if (s.w >= want or icon.large == null) s else icon.large.?) else icon.large;
+    if (img) |i| return cv.drawImage(i, r, 255);
     var h: u32 = 2166136261;
     for (name) |ch| h = (h ^ ch) *% 16777619;
     const tints = [_]u24{ 0x2F6BD0, 0x2E8B7A, 0x5B5FC7, 0x3C7DA6, 0x4F6D8F, 0x1F8A9E };

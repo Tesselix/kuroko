@@ -8,6 +8,8 @@
 //!   0x04xx  widget protocol (Mode B), reserved
 //!   0x05xx  app registry (txdesk's apps.tslx)
 //!   0x06xx  trust marks (txdesk's trust.tslx)
+//!   0x08xx  facts and influence (facts.tslx, focus.tslx), app icons
+//!           (icons.tslx)
 //!   0x7Fxx  tests
 
 const std = @import("std");
@@ -18,14 +20,21 @@ pub const scene_window: u16 = 0x0201;
 pub const desk_request: u16 = 0x0202;
 pub const scene_identity: u16 = 0x0203;
 pub const trust_request: u16 = 0x0204;
+pub const scene_session: u16 = 0x0205;
 pub const desk_app: u16 = 0x0301;
 pub const desk_trust: u16 = 0x0302;
+pub const desk_notice: u16 = 0x0303;
 pub const apps_header: u16 = 0x0501;
 pub const app_entry: u16 = 0x0502;
 pub const scan_entry: u16 = 0x0503;
 pub const search_path: u16 = 0x0504;
 pub const trust_header: u16 = 0x0601;
 pub const trust_mark: u16 = 0x0602;
+pub const facts_header: u16 = 0x0801;
+pub const fact_use: u16 = 0x0802;
+pub const influence_header: u16 = 0x0811;
+pub const influence_entry: u16 = 0x0812;
+pub const icon_image: u16 = 0x0821;
 
 /// Every type this build understands, with its newest version.
 pub const known = [_]format.Known{
@@ -42,6 +51,13 @@ pub const known = [_]format.Known{
     .{ .type_id = desk_trust, .max_version = 1 },
     .{ .type_id = trust_header, .max_version = 1 },
     .{ .type_id = trust_mark, .max_version = 1 },
+    .{ .type_id = desk_notice, .max_version = 1 },
+    .{ .type_id = scene_session, .max_version = 1 },
+    .{ .type_id = icon_image, .max_version = 1 },
+    .{ .type_id = facts_header, .max_version = 1 },
+    .{ .type_id = fact_use, .max_version = 1 },
+    .{ .type_id = influence_header, .max_version = 1 },
+    .{ .type_id = influence_entry, .max_version = 1 },
 };
 
 /// Window status shown on the bottom border (Top-Level Design, "Bottom
@@ -377,4 +393,118 @@ comptime {
     std.debug.assert(@sizeOf(DeskTrust) == 8);
     std.debug.assert(@sizeOf(TrustRequest) == 8);
     std.debug.assert(@sizeOf(SceneIdentity) == 24);
+}
+
+// ------------------------------------------------- facts and influence
+//
+// Top-Level Design, "Influence files". The recorder (txdesk) writes the
+// facts: what was used, when, for how long (facts.tslx). A predictor reads
+// them and writes what the desktop should offer (focus.tslx): the Focus and
+// Recent lists of the launcher. The compositor only reads the influence
+// file, when txdesk says it changed (DeskNotice), and freezes it while the
+// launcher is visible.
+
+pub const FactsHeader = extern struct {
+    save_count: u64,
+};
+
+/// One use of an app: a window's life (an episode). Trailing data: the app
+/// (its binary, or its app id for Tesselix's own apps), then the object
+/// open in it ("" when unknown).
+pub const FactUse = extern struct {
+    /// Unix seconds.
+    opened_s: i64,
+    /// Unix seconds; for a window still open when saved, the save time.
+    closed_s: i64,
+    /// Seconds with keyboard focus.
+    focused_s: u32,
+    app_len: u16,
+    object_len: u16,
+};
+
+pub const InfluenceSource = enum(u8) { predictor, ai, _ };
+
+pub const InfluenceHeader = extern struct {
+    /// Unix seconds.
+    written_s: i64,
+    source: InfluenceSource,
+    _pad0: [7]u8 = @splat(0),
+};
+
+pub const InfluenceList = enum(u8) { focus, recent, _ };
+
+/// Why an entry is offered; the reader turns it into a short text.
+pub const InfluenceReason = enum(u8) {
+    /// Real use: `value` is minutes with keyboard focus in the last 7 days.
+    used,
+    /// A cycle that is due: `value` is on how many days it was seen.
+    cycle,
+    /// Opened recently: `value` is when (Unix seconds).
+    opened,
+    _,
+};
+
+/// One entry, in list order. A reference, never free content: the app as
+/// in FactUse, and an object from the facts. The reader drops what it
+/// cannot resolve. Trailing data: the app, then the object.
+pub const InfluenceEntry = extern struct {
+    list: InfluenceList,
+    reason: InfluenceReason,
+    app_len: u16,
+    object_len: u16,
+    _pad0: u16 = 0,
+    value: i64,
+};
+
+/// Compositor → services: the session's switches, in every snapshot and
+/// when they change.
+pub const SceneSession = extern struct {
+    /// "Pause learning" (top bar) is off: the recorder may record. When 0,
+    /// nothing is recorded, and uses in progress end.
+    learning: u8,
+    _pad0: [7]u8 = @splat(0),
+};
+
+pub const DeskNoticeKind = enum(u8) {
+    /// focus.tslx was written again: read it when next needed.
+    influence_changed,
+    /// icons.tslx was written again.
+    icons_changed,
+    _,
+};
+
+/// txdesk → compositor: something changed that the compositor reads itself.
+/// An app's icon, drawn to pixels by txdesk (icons.tslx), so the
+/// compositor never decodes an image file. Square, the icon centered.
+/// Trailing data: the app's key (its binary), then w * h pixels, 0xAARRGGBB
+/// little-endian, straight alpha.
+pub const IconImage = extern struct {
+    w: u16,
+    h: u16,
+    key_len: u16,
+    _pad0: u16 = 0,
+    /// The icon file's time when drawn, to notice a new icon.
+    source_mtime_ns: i64,
+};
+
+pub const DeskNotice = extern struct {
+    kind: DeskNoticeKind,
+    _pad0: [7]u8 = @splat(0),
+};
+
+comptime {
+    format.checkPortable(FactsHeader);
+    format.checkPortable(FactUse);
+    format.checkPortable(InfluenceHeader);
+    format.checkPortable(InfluenceEntry);
+    format.checkPortable(DeskNotice);
+    format.checkPortable(SceneSession);
+    format.checkPortable(IconImage);
+    std.debug.assert(@sizeOf(IconImage) == 16);
+    std.debug.assert(@sizeOf(SceneSession) == 8);
+    std.debug.assert(@sizeOf(FactsHeader) == 8);
+    std.debug.assert(@sizeOf(FactUse) == 24);
+    std.debug.assert(@sizeOf(InfluenceHeader) == 16);
+    std.debug.assert(@sizeOf(InfluenceEntry) == 16);
+    std.debug.assert(@sizeOf(DeskNotice) == 8);
 }

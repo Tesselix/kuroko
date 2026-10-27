@@ -276,6 +276,28 @@ fn writePpm(io: std.Io, path: []const u8, s: *const Screen) !void {
     }
 }
 
+/// The files txdesk keeps for the compositor (in its state folder).
+const StateFiles = struct {
+    io: std.Io,
+    dir: []const u8,
+
+    fn read(ctx: *anyopaque, gpa: std.mem.Allocator, name: []const u8) ?[]u8 {
+        const self: *StateFiles = @ptrCast(@alignCast(ctx));
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const path = std.fmt.bufPrint(&buf, "{s}/{s}", .{ self.dir, name }) catch return null;
+        return std.Io.Dir.cwd().readFileAlloc(self.io, path, gpa, .limited(256 * 1024 * 1024)) catch null;
+    }
+};
+
+/// A file in $XDG_STATE_HOME/tesselix (~/.local/state/tesselix), as txdesk
+/// keeps them.
+fn stateFile(init: std.process.Init, name: []const u8) ![]const u8 {
+    const arena = init.arena.allocator();
+    if (init.environ_map.get("XDG_STATE_HOME")) |st| return std.fs.path.join(arena, &.{ st, "tesselix", name });
+    const home = init.environ_map.get("HOME") orelse "/tmp";
+    return std.fs.path.join(arena, &.{ home, ".local/state/tesselix", name });
+}
+
 /// Monotonic nanoseconds since start: the core's frame clock.
 const Clock = struct {
     io: std.Io,
@@ -602,6 +624,10 @@ pub fn main(init: std.process.Init) !void {
     // Otherwise, as after login: a clean desktop with nothing started. The
     // apps are in the launcher.
 
+    // What txdesk keeps for the compositor: Focus and Recent, app icons.
+    var state_files: StateFiles = .{ .io = io, .dir = try stateFile(init, "") };
+    comp.state_reader = .{ .ctx = &state_files, .read = StateFiles.read };
+
     // Tesselix as a Wayland server: apps started from the launcher (and
     // any app given WAYLAND_DISPLAY) open their windows in Tesselix.
     var adopt: Adopt = .{ .comp = comp, .clock = clock };
@@ -689,6 +715,7 @@ pub fn main(init: std.process.Init) !void {
 
         if (wl) |w| w.dispatch();
         comp.setClock(clockText(&clock_buf));
+        comp.setWallTime(c.time(null));
         if (comp.tick(now)) need = true;
 
         const want: core.input.Cursor = comp.cursor;

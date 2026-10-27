@@ -59,6 +59,14 @@ pub const WindowTrust = struct {
     object: []const u8,
 };
 
+/// How the compositor reads the files txdesk keeps for it (focus.tslx,
+/// icons.tslx), by name. The backend does the reading; the core stays free
+/// of I/O. Returns the file's bytes (owned by the caller), or null.
+pub const StateReader = struct {
+    ctx: *anyopaque,
+    read: *const fn (ctx: *anyopaque, gpa: std.mem.Allocator, name: []const u8) ?[]u8,
+};
+
 pub const Params = struct {
     /// Tesselix defaults (Look and Controls, "Scroll direction").
     wheel_natural: bool = false,
@@ -391,6 +399,22 @@ pub const Compositor = struct {
     /// that txdesk has not confirmed yet.
     marks: core.trust.Marks,
 
+    /// The launcher's Focus and Recent, from txdesk's influence file. Read
+    /// when the launcher opens after txdesk said it changed. Without it,
+    /// Focus is empty and Recent is this session's launches (`recent`).
+    state_reader: ?StateReader = null,
+    influence_bytes: []u8 = &.{},
+    influence: core.influence.Decoded = .{},
+    influence_ok: bool = false,
+    influence_stale: bool = true,
+    /// Wall clock (Unix seconds), from the backend; 0 when unknown.
+    wall_s: i64 = 0,
+    /// App icons as pixels (txdesk's icons.tslx); read again when txdesk
+    /// says they changed. `icon_ids` are the GPU picture ids, one per icon.
+    icons: core.icons.Set,
+    icon_ids: std.ArrayList(u64) = .empty,
+    icons_stale: bool = true,
+
     pub fn init(gpa: std.mem.Allocator, apps: []const AppEntry, screen: Size, scale: i32, params: Params) !*Compositor {
         const c = try gpa.create(Compositor);
         errdefer gpa.destroy(c);
@@ -412,6 +436,7 @@ pub const Compositor = struct {
             .windows = core.Registry(Window).init(gpa),
             .publisher = Publisher.init(gpa),
             .marks = .init(gpa),
+            .icons = .init(gpa),
         };
         return c;
     }
@@ -435,6 +460,10 @@ pub const Compositor = struct {
         self.recent.deinit(self.gpa);
         self.scratch.deinit(self.gpa);
         self.marks.deinit();
+        self.influence.deinit(self.gpa);
+        self.icons.deinit();
+        self.icon_ids.deinit(self.gpa);
+        self.gpa.free(self.influence_bytes);
         self.publisher.deinit();
         self.app_infos.deinit(self.gpa);
         self.installed.deinit();
@@ -448,6 +477,27 @@ pub const Compositor = struct {
         @memcpy(self.clock[0..n], text[0..n]);
         self.clock_len = n;
         self.full_redraw = true;
+    }
+
+    /// "Pause learning" (top bar, control center): the recorder stops while
+    /// learning is off.
+    pub fn setLearning(self: *Compositor, on: bool) void {
+        if (self.learning == on) return;
+        self.learning = on;
+        self.full_redraw = true;
+        if (self.publisher.subscriberCount() == 0) return;
+        self.scratch.clearRetainingCapacity();
+        self.sessionRecord(&self.scratch);
+        self.publisher.broadcast(self.scratch.items);
+    }
+
+    fn sessionRecord(self: *Compositor, out: *std.ArrayList(u8)) void {
+        core.format.appendStruct(self.gpa, out, core.types.scene_session, 1, core.types.SceneSession{ .learning = @intFromBool(self.learning) }, "") catch {};
+    }
+
+    /// The wall clock, Unix seconds (the launcher's "5 min ago").
+    pub fn setWallTime(self: *Compositor, unix_s: i64) void {
+        self.wall_s = unix_s;
     }
 
     pub fn setScreen(self: *Compositor, size: Size, scale: i32, now: i64) void {
@@ -1348,7 +1398,7 @@ pub const Compositor = struct {
         _ = now;
         switch (row) {
             .dark => self.setDark(!self.theme.dark),
-            .learning => self.learning = !self.learning,
+            .learning => self.setLearning(!self.learning),
             .wheel_natural => self.params.wheel_natural = !self.params.wheel_natural,
             .touchpad_natural => self.params.touchpad_natural = !self.params.touchpad_natural,
         }
@@ -1378,7 +1428,10 @@ pub const Compositor = struct {
         } else {
             const px = if (self.px < 0) @as(f32, @floatFromInt(self.screen.w)) / 2 else self.px;
             const py = if (self.py < 0) @as(f32, @floatFromInt(self.screen.h)) / 2 else self.py;
-            self.launcher.show(.{ .x = 0, .y = 0, .w = self.screen.w, .h = self.screen.h }, px, py, self.app_infos.items, self.recent.items, now);
+            var focus_list: [core.influence.max_per_list]shell.Pick = undefined;
+            var recent_list: [core.influence.max_per_list]shell.Pick = undefined;
+            const lists = self.launcherLists(&focus_list, &recent_list);
+            self.launcher.show(.{ .x = 0, .y = 0, .w = self.screen.w, .h = self.screen.h }, px, py, self.app_infos.items, focus_list[0..lists.focus], recent_list[0..lists.recent], self.wall_s, now);
         }
         self.full_redraw = true;
     }
@@ -1580,6 +1633,12 @@ pub const Compositor = struct {
     /// A record from txdesk: the app registry.
     fn onDeskRecord(self: *Compositor, rec: core.format.Record) void {
         if (rec.type_id == core.types.desk_trust) return self.applyTrustRecord(rec);
+        if (rec.type_id == core.types.desk_notice) {
+            const m = core.format.readStruct(core.types.DeskNotice, rec);
+            if (m.kind == .influence_changed) self.influence_stale = true;
+            if (m.kind == .icons_changed) self.icons_stale = true;
+            return;
+        }
         const res = self.installed.apply(rec) catch return;
         switch (res) {
             .none => {},
@@ -1591,6 +1650,101 @@ pub const Compositor = struct {
             },
             .need_snapshot => self.askForApps(),
         }
+    }
+
+    // -------------------------------------------------- focus and recent
+
+    /// Reads the influence file if txdesk said it changed. A missing or
+    /// broken file means none: the simple session list is used instead.
+    fn refreshInfluence(self: *Compositor) void {
+        if (!self.influence_stale) return;
+        const r = self.state_reader orelse return;
+        self.influence_stale = false;
+        self.influence_ok = false;
+        self.gpa.free(self.influence_bytes);
+        self.influence_bytes = &.{};
+        self.influence.picks.clearRetainingCapacity();
+        const bytes = r.read(r.ctx, self.gpa, "focus.tslx") orelse return;
+        self.influence_bytes = bytes;
+        core.influence.decode(self.gpa, bytes, &self.influence) catch return;
+        self.influence_ok = true;
+    }
+
+    /// Reads the icons if txdesk said they changed, and gives each app its
+    /// icon.
+    fn refreshIcons(self: *Compositor) void {
+        if (!self.icons_stale) return;
+        const r = self.state_reader orelse return;
+        self.icons_stale = false;
+        const bytes = r.read(r.ctx, self.gpa, "icons.tslx") orelse return;
+        defer self.gpa.free(bytes);
+        self.icons.decode(bytes) catch return;
+        self.icon_ids.clearRetainingCapacity();
+        for (self.icons.icons.items) |_| {
+            self.image_seq += 1;
+            self.icon_ids.append(self.gpa, self.image_seq) catch return;
+        }
+        self.syncInstalled();
+    }
+
+    fn iconFor(self: *const Compositor, key: []const u8) chrome.Icon {
+        var out: chrome.Icon = .{};
+        for (self.icons.icons.items, 0..) |*ic, i| {
+            if (!std.mem.eql(u8, ic.key, key) or i >= self.icon_ids.items.len) continue;
+            const img: tw.Image = .{ .pixels = ic.pixels, .w = ic.w, .h = ic.h, .id = self.icon_ids.items[i] };
+            if (ic.w <= 64) out.small = img else out.large = img;
+        }
+        return out;
+    }
+
+    fn appIcon(self: *const Compositor, app: usize) chrome.Icon {
+        if (app < self.app_infos.items.len) return self.app_infos.items[app].icon;
+        return .{};
+    }
+
+    /// The launcher index of an influence reference: an installed app by
+    /// its binary, or one of Tesselix's own apps by its app id. Unknown
+    /// references are dropped (references, not free content).
+    fn resolveApp(self: *const Compositor, ref: []const u8) ?usize {
+        for (self.apps, 0..) |a, i| {
+            if (std.mem.eql(u8, a.app_id, ref)) return i;
+        }
+        for (self.installed.entries.items, 0..) |e, i| {
+            if (std.mem.eql(u8, e.key, ref)) return self.apps.len + i;
+        }
+        return null;
+    }
+
+    /// Focus and Recent for the launcher, at the moment it opens.
+    fn launcherLists(self: *Compositor, focus_out: []shell.Pick, recent_out: []shell.Pick) struct { focus: usize, recent: usize } {
+        self.refreshInfluence();
+        var nf: usize = 0;
+        var nr: usize = 0;
+        if (self.influence_ok) {
+            for (self.influence.picks.items) |p| {
+                const app = self.resolveApp(p.app) orelse continue;
+                const pick: shell.Pick = .{ .app = app, .reason = p.reason, .value = p.value };
+                switch (p.list) {
+                    .focus => if (nf < focus_out.len) {
+                        focus_out[nf] = pick;
+                        nf += 1;
+                    },
+                    .recent => if (nr < recent_out.len) {
+                        recent_out[nr] = pick;
+                        nr += 1;
+                    },
+                    _ => {},
+                }
+            }
+            return .{ .focus = nf, .recent = nr };
+        }
+        // No predictor: this session's launches, newest first.
+        for (self.recent.items) |a| {
+            if (nr == recent_out.len) break;
+            recent_out[nr] = .{ .app = a };
+            nr += 1;
+        }
+        return .{ .focus = 0, .recent = nr };
     }
 
     // ------------------------------------------------------------- trust
@@ -1750,6 +1904,7 @@ pub const Compositor = struct {
             info.hidden = !e.shown();
             info.missing = e.status == .missing;
             info.update = e.update;
+            info.icon = self.iconFor(e.key);
         }
         self.full_redraw = true;
     }
@@ -2597,7 +2752,7 @@ pub const Compositor = struct {
         }
         switch (top) {
             .learning => {
-                self.learning = !self.learning;
+                self.setLearning(!self.learning);
                 return;
             },
             .apps => {
@@ -3060,6 +3215,7 @@ pub const Compositor = struct {
 
         if (self.publisher.poll()) self.sendSnapshot();
         self.publisher.receive(self, onDeskRecord);
+        self.refreshIcons();
         self.publisher.flush();
         self.windows.collect(null);
         return need;
@@ -3105,7 +3261,7 @@ pub const Compositor = struct {
                     const menu = if (g.ptr.surface) |s| s.menu() else &[_][]const u8{};
                     const frame = self.chromeFrame(g.ptr, now);
                     cv.fillRect(frame.translate(0, 3), self.theme.get(.shadow));
-                    chrome.drawTitleBar(cv, &self.theme, frame, self.chromeState(g.ptr, now), title, self.appName(g.ptr.app), menu);
+                    chrome.drawTitleBar(cv, &self.theme, frame, self.chromeState(g.ptr, now), title, self.appName(g.ptr.app), self.appIcon(g.ptr.app), menu);
                     self.drawSpaceDots(cv, true, now);
                 }
             }
@@ -3220,7 +3376,7 @@ pub const Compositor = struct {
             cv.fillRect(content, th.get(.surface));
             const fade = std.math.clamp(@as(f32, @floatFromInt(now - w.launch_start)) / @as(f32, @floatFromInt(200 * ms)), 0, 1);
             const icon = Rect{ .x = content.x + @divTrunc(content.w - 64, 2), .y = content.y + @divTrunc(content.h, 2) - 60, .w = 64, .h = 64 };
-            chrome.drawAppIcon(cv, th, icon, app_name, .title);
+            chrome.drawAppIcon(cv, th, icon, app_name, .title, self.appIcon(w.app));
             if (fade < 1) cv.fillRect(icon.inset(-2), th.get(.surface).fade(1 - fade));
             const m = tw.font.Metrics.of(.{ .size = .large }, self.scale);
             _ = cv.text(@as(f32, @floatFromInt(content.x)) + (@as(f32, @floatFromInt(content.w)) - m.width(app_name)) / 2, @floatFromInt(icon.bottom() + 14), app_name, .{ .size = .large }, th.get(.text_dim).fade(fade));
@@ -3228,7 +3384,7 @@ pub const Compositor = struct {
 
         const title = if (w.surface) |s| s.title() else app_name;
         const menu = if (w.surface) |s| s.menu() else &[_][]const u8{};
-        chrome.drawTitleBar(cv, th, frame, self.chromeState(w, now), title, app_name, menu);
+        chrome.drawTitleBar(cv, th, frame, self.chromeState(w, now), title, app_name, self.appIcon(w.app), menu);
         chrome.drawBorders(cv, th, frame, w.status, now);
     }
 
@@ -3329,7 +3485,7 @@ pub const Compositor = struct {
             // picture; the enlarged view has the title.
             const ic = Rect{ .x = thumb.x - 3, .y = thumb.bottom() + thumb_label - thumb_icon, .w = thumb_icon, .h = thumb_icon };
             cv.fillRoundRect(ic.inset(-2), @as(f32, @floatFromInt(thumb_icon)) * 0.3, th.get(.chrome));
-            chrome.drawAppIcon(cv, th, ic, self.appName(w.app), .body);
+            chrome.drawAppIcon(cv, th, ic, self.appName(w.app), .body, self.appIcon(w.app));
             // Several windows of the app: their number at the top-right.
             if (gr.count > 1) {
                 const bx: f32 = @floatFromInt(thumb.right() - 2);
@@ -3482,6 +3638,7 @@ pub const Compositor = struct {
         self.scratch.clearRetainingCapacity();
         const marker = core.types.SceneWindow{ .kind = .snapshot_begin, .status = .normal, .focused = 0, .shelved = 0, .window_id = 0, .x = 0, .y = 0, .w = 0, .h = 0, .progress = 0, .title_len = 0, .app_id_len = 0 };
         core.format.appendStruct(self.gpa, &self.scratch, core.types.scene_window, 1, marker, "") catch return;
+        self.sessionRecord(&self.scratch);
         var hs: std.ArrayList(Handle) = .empty;
         defer hs.deinit(self.gpa);
         self.windows.handles(&hs, self.gpa) catch return;

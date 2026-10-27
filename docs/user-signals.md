@@ -1,10 +1,10 @@
-# Tesselix — Signals for Clipboard, Sensitive Windows and Interest
+# Tesselix — Signals for Clipboard, Sensitive Windows and Focus
 
 Oct 27, 2026 · @feral keep
 
 ## Purpose
 
-Three features are still being defined: a clipboard history with trusted paste, sensitive windows, and "recent" based on real interest. Their detailed design comes later. This document records the concepts and, more importantly, the **facts Tesselix must provide** so that they can be computed when they are designed. Building these facts in early is cheap; adding them to a finished compositor is not.
+Three features are still being defined: a clipboard history with trusted paste, sensitive windows, and Focus: what the user really showed interest in, listed before "recent". Their detailed design comes later. This document records the concepts and, more importantly, the **facts Tesselix must provide** so that they can be computed when they are designed. Building these facts in early is cheap; adding them to a finished compositor is not.
 
 Notation follows the Top-Level Design: **(agreed)**, **(suggestion)**, **[compositor]**, **[desktop]**. The concepts are the user's (agreed as concepts); everything about how they work is a suggestion.
 
@@ -30,7 +30,7 @@ Notation follows the Top-Level Design: **(agreed)**, **(suggestion)**, **[compos
 - While a sensitive object is on screen, Tesselix can **hide its content quickly**: blur it when the pointer is not over it, blur it after a time without interaction (like a screen saver, without locking), or blur it or show **decoy content** at once on a quick gesture (both mouse buttons, a shortcut).
 - The goal is to prevent shoulder surfing.
 
-### Interest instead of "recent" (agreed, concept)
+### Focus, before "recent" (agreed, concept)
 
 - Today "recent" means "opened last", so files opened by mistake and closed at once push out the ones that matter.
 - An object becomes **interesting** only through **real interaction**:
@@ -38,7 +38,18 @@ Notation follows the Top-Level Design: **(agreed)**, **(suggestion)**, **[compos
   - A document: a pattern of actual reading.
 - **Cycles:** when the user opens an object as part of a repeated pattern (every workday, in the first hour after the first login), Tesselix shows it as interesting when the pattern's time comes again (that first hour).
 
-This is the Design Concept's episodes, salience and cycle detection, with "recent" replaced by "interesting".
+This is the Design Concept's episodes, salience and cycle detection, shown as its own list before "recent".
+
+**Naming (agreed, 2026-10-27):**
+
+- **Focus** is what the user sees: the list of objects the user really showed interest in. A noun: "your focus", "in focus". It is the Design Concept's "Relevant now", renamed because that reads too much like "recent".
+- **Both lists, Focus first** (agreed): wherever "Recent" appears (the window's icon menu, file pickers, the launcher), **Focus** comes first and **Recent** follows it. Recent stays what people know: opened last, in order. Focus is what mattered.
+- **How the two lists are built** (agreed):
+  1. **Focus is prepared first,** from salience and due cycles.
+  2. **Recent holds what is not in Focus,** ordered by time only (last opened first). No scoring, no interest: an object is in exactly one of the two lists.
+- **Keyboard focus** is always called that in the documents, so the two never mix. In code, `focused` keeps meaning keyboard focus; the list uses its own names (`focus_list`, not `focus`).
+- Inside the system: **interest** is what each interaction measures (watched 20 s since the last jump, a reading pattern); **salience** is the score built from it, decaying over time, with cycles. An object is in focus when its salience is high or its cycle is due.
+- (suggestion) Each entry shows why it is there ("read for 25 min yesterday", "you open this every morning"), so the list never feels arbitrary.
 
 ## Where things are decided
 
@@ -52,8 +63,8 @@ Following the guiding rule (Architecture), the compositor provides facts and enf
 | Storing a raised trust | [desktop] | Kept with the user's marks; the compositor's stored window trust is updated at once, so the paste goes ahead without waiting |
 | Hide now (gesture, pointer left, idle) | [compositor] | Must take effect in the same frame, and must hold even if services are down |
 | Which objects are sensitive | [desktop] | The user's list; sent to the compositor as a per-window flag |
-| Is this video or document interesting? | [desktop] | Recorder and memory, from episodes |
-| Cycles, "interesting now" | [desktop] | Memory, with the temporal calendar |
+| Is this video or document in focus? | [desktop] | Recorder and memory, from episodes |
+| Cycles: in focus again when the cycle is due | [desktop] | Memory, with the temporal calendar |
 
 ## Facts Tesselix must provide
 
@@ -82,7 +93,7 @@ All three features ask the same question: which file, URI or folder is in this w
 The compositor sees every input and knows what is on screen. It reports, per window (suggestion: as the "input summaries" the event publisher already lists):
 
 - **Visibility:** shown (and how much of it), covered, on the shelf, on another space; the screen locked or off.
-- **Focus:** gained and lost.
+- **Keyboard focus:** gained and lost.
 - **Pointer:** entered and left the window.
 - **Input by kind, not content:** key presses as kinds (letter, digit, navigation, editing, shortcut), clicks, scroll amount and direction, page keys. Never which letters (Debugging Foundations, "Privacy"; Design Concept, "Privacy and safety rules").
 - **Idle:** time since the last input, for the whole session and per window.
@@ -127,10 +138,11 @@ The interaction facts and the debugging trace come from the same places in the c
 
 ## What this means for the code now
 
+- Done (2026-10-27): Focus and Recent in the launcher, decided by txdesk from recorded uses (see `docs/implementation-notes.md`, "Focus and Recent"); the top bar's Learning switch pauses the recording.
 - Done (2026-10-27): every client is tied to its PID and binary at connect time; the user can mark apps, files and folders trusted or untrusted; the compositor decides each window's trust and publishes it. Details: `docs/implementation-notes.md`, "Identity and trust". Still to do here: the pidfd (a PID can be reused), and re-checking the binary when the process `exec`s.
 - txwl: a real data device (copy and paste), with the compositor able to be the source, and every copy and paste recorded with source and target.
 - The layer list: a per-layer "content mode" (as is, blurred, replaced) and one switch that covers every place a window's pixels are drawn.
-- The event publisher: per-window interaction summaries (visibility, focus, pointer, input kinds, idle) and session events, next to the scene-graph deltas.
+- The event publisher: per-window interaction summaries (visibility, keyboard focus, pointer, input kinds, idle) and session events, next to the scene-graph deltas.
 - The Tesselix protocol: Tesselix apps report the object they show and the part in view.
 
 ## Open questions
@@ -144,6 +156,6 @@ The interaction facts and the debugging trace come from the same places in the c
 - [ ] Trust: how installed apps earn trust (now: any installed app is trusted).
 - [ ] Trust: also offer "Paste once" without raising anything, or keep the warning to raising trust only?
 - [ ] Clipboard: are secret and sensitive copies left out of the history, or kept masked?
-- [ ] Interest: what counts as "a pattern of reading" per kind of object.
-- [ ] Interest: how a cycle is announced (launcher entry, a marker in "Relevant now").
+- [ ] Focus: what counts as "a pattern of reading" per kind of object.
+- [ ] Focus: how a cycle is announced (a launcher entry, a marker in the Focus list).
 - [ ] Window → object mapping for apps that show several objects at once (tabs, split views).

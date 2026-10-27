@@ -126,7 +126,7 @@ pub const File = struct {
         if (std.fs.path.dirname(self.path)) |dir| try std.Io.Dir.cwd().createDirPath(io, dir);
         const tmp = try std.fmt.allocPrint(gpa, "{s}.tmp", .{self.path});
         defer gpa.free(tmp);
-        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = tmp, .data = bytes });
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = tmp, .data = bytes, .flags = .{ .permissions = .fromMode(0o600) } });
         try std.Io.Dir.renameAbsolute(tmp, self.path, io);
         self.stat = Stat.of(io, self.path);
     }

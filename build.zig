@@ -108,12 +108,24 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{.{ .name = "txcore", .module = core }},
     });
+    const focus_test = b.createModule(.{
+        .root_source_file = b.path("txdesk/src/focus.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "txcore", .module = core }},
+    });
+    const icons_test = b.createModule(.{
+        .root_source_file = b.path("txdesk/src/icons.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "txcore", .module = core }},
+    });
     const stub_test = b.createModule(.{
         .root_source_file = b.path("tools/txsim/src/sdl_stub.zig"),
         .target = target,
         .optimize = optimize,
     });
-    for ([_]*std.Build.Module{ core, widgets, comp, wl, gpu, controls, headless, stub_test, apps_test, trust_test }) |m| {
+    for ([_]*std.Build.Module{ core, widgets, comp, wl, gpu, controls, headless, stub_test, apps_test, trust_test, focus_test, icons_test }) |m| {
         const t = b.addTest(.{ .root_module = m });
         test_step.dependOn(&b.addRunArtifact(t).step);
     }

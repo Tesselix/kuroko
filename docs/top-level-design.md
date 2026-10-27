@@ -214,7 +214,7 @@ The layout executor decides every window's size and position. Apps can ask (maxi
 - **Rows.** A screen holds up to **2 rows** and up to **4 windows** in total (the limit of about 4 items recognized at a glance). For example: 2 windows in row 0 and 1 window spanning row 1; with a 4th, 2 and 2.
 - **Row height comes from content.** A row of small apps (indicators, short tools) can be shorter than the other row, which gets the rest of the height.
 - **Window tile** (agreed, 2026-10-14): the area the layout allocates to a window. Tiles cover the screen with no gaps or overlaps; windows sit inside them.
-- **A window fills about 95% of its tile** (90–95%, a parameter), centered, so a margin shows where the tile ends and that there is no more room. (Replaces "a window smaller than its space is centered at its optimal size".)
+- **A window fills 99% of its tile** (a parameter; agreed 2026-10-28, was about 95%), centered, so a thin margin shows where the tile ends and that there is no more room. (Replaces "a window smaller than its space is centered at its optimal size".)
 - **A tile is as wide as its window needs:** the optimal width divided by the fill. Leftover width goes to the tiles of windows whose content can use it (growable: documents and other reflowable content); if none can, it is shared equally.
 - **Too little room:** a window with fixed content keeps its tile and a growable window reflows into the rest; between two of the same kind, the focused one keeps its size.
 - **The user adjusts, within the rules.** Dragging the shared border between two tiles, or between the two rows, resizes both tiles and the windows in them. The border is drawn as a line with a grip; the whole gap between the two windows is the grab area. The result is learned as a preference for that app or context.
@@ -280,20 +280,26 @@ Every window has four buttons: **close, minimize, maximize, full screen**.
 
 ## Launcher [compositor]
 
-Opened by pressing and releasing **Super** alone. It shows all applications at once, with a section of the most probable ones.
+Opened by pressing and releasing **Super** alone. It shows all applications at once, after two sections: **Focus** (what the user really showed interest in) and **Recent** (the rest, by time).
 
 ### Layout (agreed)
 
 - **A large rectangle covering most of the screen,** on the screen where the pointer is, centered on the pointer and clamped to the screen edges. The pointer is always inside it, near the center. Because it is large, it barely moves between openings, so its layout stays in almost the same place.
-- **Most probable apps** in a section at the center, nearest the pointer: 3–4 entries.
-- **All apps** around it, in a stable order (alphabetical or arranged by the user), never by usage. Visual groups of about 4.
+- **Three sections, in this order** (agreed, 2026-10-27): **Focus**, then **Recent**, then **All apps** (see `docs/user-signals.md`, "Focus, before recent").
+  - **Focus** at the center, nearest the pointer: 3–4 entries.
+  - **Recent** next to it: what is not in Focus, by time only (last opened first). (suggestion) 3–4 entries.
+  - **All apps** around them, in a stable order (alphabetical or arranged by the user), never by usage. Visual groups of about 4.
+- **Don't overload the user** (agreed, 2026-10-27): every item is shown once, and only where it matters most. Fewer, relevant items are easier to choose from than a long list (Human Factors, choice).
+  - **Focus comes first; an entry in Focus never appears in Recent.**
+  - **All apps lists only the apps not already shown** in Focus or Recent, in its stable order.
 - **Opens on release of Super,** only if no other key was pressed while it was held, so Super+Tab and other shortcuts never flash it. Visible within 0.1 s.
 - **No accidental hover:** highlights wait until the pointer actually moves.
 
-### Most probable apps (agreed)
+### Focus and Recent (agreed)
 
 - **An entry is an app, or an app with the file it had open** ("LibreOffice · report.odt"). Clicking it opens the app with that file. The file comes from the fact history, which stores a pointer to the file, never its content.
-- **First, simple predictions:** recency, the same moment in a previous cycle (this time yesterday, the same weekday last week, the same point last month), and what usually follows the current app. No language model is needed.
+- **Focus is prepared first:** salience from real interest, and cycles that are due (this time yesterday, the same weekday last week, the same point last month), and what usually follows the current app. No language model is needed.
+- **Recent is prepared second:** the entries not in Focus, by time only. (Before, recency was one of the predictions; now it is its own section.)
 - **Later, the AI** writes its own influence file; the launcher reads whichever is valid (see Influence files).
 - **Computed when the launcher opens, frozen while it is visible.**
 - **An app already running** is focused (or opens the file in its existing window) rather than started again.
@@ -301,8 +307,8 @@ Opened by pressing and releasing **Super** alone. It shows all applications at o
 - **Choosing a running app brings its window up wherever it is,** and shows the way to it: an outline travels from the icon to the window, then the window flashes once. A minimized window grows out of the icon into its tile; a new window grows out of the icon too; a full-screen window's space slides in. A window restored from the panel also flashes once when it lands. (agreed, 2026-10-14)
 - **Two or more windows of the app:** a small floating panel opens under the icon with each window scaled down, labelled with where it is ("top left", "minimized", "full screen"), and a last tile for a new window. The window under the pointer is outlined on screen. Click one to bring it up; Esc or a click outside closes the panel. (agreed, 2026-10-14)
 - **A new window of a running app:** hovering its tile shows a **"+"** at the icon's corner; clicking it opens a new window. Shift+click and Shift+Enter do the same. The chooser for several windows ends with a "New window" tile too. (agreed, 2026-10-14)
-- **No history yet:** the section is hidden or shows favorites.
-- A small reason under an entry ("yesterday 9:10", "Mondays").
+- **No history yet:** Focus is hidden or shows favorites; Recent is hidden until something was opened.
+- A small reason under a Focus entry ("read for 25 min yesterday", "Mondays"); a Recent entry shows when it was opened ("yesterday 9:10").
 
 ### Filter (agreed)
 

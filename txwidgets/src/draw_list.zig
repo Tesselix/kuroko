@@ -17,7 +17,8 @@ const font = @import("font.zig");
 const Rect = core.Rect;
 const Color = core.Color;
 
-/// Pixels the canvas can copy: opaque 0xAARRGGBB, `w * h`, rows packed.
+/// Pixels the canvas can copy: 0xAARRGGBB, `w * h`, rows packed. Window
+/// pictures are opaque; icons use their alpha (straight, not premultiplied).
 pub const Image = struct {
     pixels: []const u32,
     w: i32,
@@ -40,8 +41,9 @@ pub const Op = union(enum) {
     /// A glyph's top-left at (x, y); its atlas is found by pointer.
     glyph: struct { x: i32, y: i32, glyph: *const font.Glyph },
     /// `exact`: copied 1:1 at `dst`'s corner. Otherwise scaled (nearest)
-    /// into `dst` and faded by `alpha`.
-    image: struct { img: Image, dst: Rect, alpha: u8, exact: bool },
+    /// into `dst` and faded by `alpha`. `blend`: the image's own alpha is
+    /// used (icons); otherwise it is opaque (window pictures).
+    image: struct { img: Image, dst: Rect, alpha: u8, exact: bool, blend: bool = false },
 };
 
 pub const Cmd = struct {
@@ -102,6 +104,8 @@ test "recording and replaying draws the same pixels" {
             cv.blit(im, 70, 2);
             cv.blitScaled(im, .{ .x = 20, .y = 30, .w = 25, .h = 17 }, 180);
             cv.triangleRight(90, 10, 5, Color.rgb(0x444444));
+            const icon_px = [4]u32{ 0xFFFF0000, 0x8000FF00, 0x00000000, 0x400000FF };
+            cv.drawImage(.{ .pixels = &icon_px, .w = 2, .h = 2, .id = 2 }, .{ .x = 30, .y = 50, .w = 9, .h = 9 }, 200);
         }
     };
 

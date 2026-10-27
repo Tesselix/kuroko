@@ -25,7 +25,7 @@ const DrawList = tw.DrawList;
 
 pub const Api = enum { gl33, gles30 };
 
-const Kind = enum(u8) { fill, image, glyph, round_fill, round_stroke, line };
+const Kind = enum(u8) { fill, image, glyph, round_fill, round_stroke, line, image_alpha };
 
 const Vertex = extern struct {
     x: f32,
@@ -98,6 +98,10 @@ const fragment_src =
     \\    } else if (k == 4) {
     \\        float d = roundRectDist(v_pos, v_p, v_q.x);
     \\        a *= clamp(0.5 - d, 0.0, 1.0) - clamp(0.5 - (d + v_q.y), 0.0, 1.0);
+    \\    } else if (k == 6) {
+    \\        vec4 t = texture(u_image, v_uv);
+    \\        rgb = t.bgr;
+    \\        a *= t.a;
     \\    } else if (k == 5) {
     \\        vec2 pa = v_pos - v_p.xy;
     \\        vec2 ba = v_p.zw - v_p.xy;
@@ -362,7 +366,7 @@ pub const Renderer = struct {
                     const tex = self.imageTexture(o.img) orelse continue;
                     self.use(clip, tex, o.exact);
                     const dst = if (o.exact) Rect{ .x = o.dst.x, .y = o.dst.y, .w = o.img.w, .h = o.img.h } else o.dst;
-                    self.quad(fr(dst), .{ 0, 0, 1, 1 }, .{ 255, 255, 255, o.alpha }, .image, @splat(0), @splat(0));
+                    self.quad(fr(dst), .{ 0, 0, 1, 1 }, .{ 255, 255, 255, o.alpha }, if (o.blend) .image_alpha else .image, @splat(0), @splat(0));
                 },
             }
         }

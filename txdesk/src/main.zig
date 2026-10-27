@@ -27,12 +27,21 @@
 //!   txdesk trust folder <path> trusted|untrusted|clear
 //!   txdesk trust check <path>     what an app binary or a file gets now
 //! A running txdesk notices the change and tells the compositor.
+//!
+//! And Focus and Recent (focus.zig): it records each window's use from the
+//! scene (facts.tslx) and writes the launcher's lists (focus.tslx, an
+//! influence file), then tells the compositor to read them.
+//!
+//! And the apps' icons as pixels (icons.zig, icons.tslx), drawn from their
+//! PNG or SVG files after each scan, so the compositor decodes nothing.
 
 const std = @import("std");
 const core = @import("txcore");
 const types = core.types;
 const apps = @import("apps/root.zig");
 const trust = @import("trust.zig");
+const focus = @import("focus.zig");
+const icons = @import("icons.zig");
 
 const Win = struct {
     id: u64,
@@ -56,6 +65,8 @@ const Scene = struct {
     gpa: std.mem.Allocator,
     windows: std.ArrayList(Win) = .empty,
     snapshot: bool = false,
+    /// The top bar's learning switch: off pauses the recorder.
+    learning: bool = true,
 
     fn find(self: *Scene, id: u64) ?*Win {
         for (self.windows.items) |*w| {
@@ -65,6 +76,10 @@ const Scene = struct {
     }
 
     fn apply(self: *Scene, rec: core.format.Record) !bool {
+        if (rec.type_id == types.scene_session) {
+            self.learning = core.format.readStruct(types.SceneSession, rec).learning != 0;
+            return !self.snapshot;
+        }
         if (rec.type_id == types.scene_identity) {
             const m = core.format.readStruct(types.SceneIdentity, rec);
             const exe = core.format.trailing(types.SceneIdentity, rec);
@@ -184,10 +199,17 @@ pub fn main(init: std.process.Init) !void {
         .link = .init(gpa),
         .trust = .init(gpa, try stateFile(init, "trust.tslx")),
         .sigs = .init(gpa),
+        .facts = .init(gpa),
+        .facts_file = try stateFile(init, "facts.tslx"),
+        .focus_file = try stateFile(init, "focus.tslx"),
+        .icons = .init(gpa),
+        .icons_file = try stateFile(init, "icons.tslx"),
     };
     defer desk.deinit();
     desk.load();
     desk.loadTrust();
+    desk.loadFacts();
+    desk.loadIcons();
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(gpa);
@@ -204,6 +226,8 @@ pub fn main(init: std.process.Init) !void {
                 try out.print("txdesk: connected\n", .{});
                 desk.sendSnapshot();
                 desk.sendTrust();
+                desk.notice(.influence_changed);
+                desk.notice(.icons_changed);
             } else |_| if (!waiting_said) {
                 try out.print("txdesk: waiting for the compositor at {s}\n", .{path});
                 waiting_said = true;
@@ -216,6 +240,10 @@ pub fn main(init: std.process.Init) !void {
             desk.loadTrust();
             desk.sendTrust();
         }
+
+        // Focus and Recent: periodic saves, and time moving on (interest
+        // fades, cycles start and end).
+        desk.tick();
 
         const now = std.Io.Timestamp.now(io, .awake).toMilliseconds();
         if (now >= next_scan) {
@@ -232,6 +260,7 @@ pub fn main(init: std.process.Init) !void {
         var chunk: [8192]u8 = undefined;
         const n = core.ipc.read(fd, &chunk) catch 0;
         if (n == 0) {
+            desk.compositorGone();
             desk.disconnect();
             try out.print("txdesk: compositor closed the connection; reconnecting\n", .{});
             try out.flush();
@@ -262,6 +291,7 @@ pub fn main(init: std.process.Init) !void {
         std.mem.copyForwards(u8, buf.items[0..rest], buf.items[buf.items.len - rest ..]);
         buf.shrinkRetainingCapacity(rest);
 
+        if (changed) desk.windowsChanged(&scene);
         if (changed) {
             const t = @as(f64, @floatFromInt(std.Io.Timestamp.now(io, .awake).toMilliseconds() - start)) / 1000;
             try scene.print(out, t, &desk.sigs, io);
@@ -283,6 +313,17 @@ const Desk = struct {
     link: apps.link.Link,
     trust: trust.File,
     sigs: trust.Signatures,
+    facts: focus.Facts,
+    facts_file: []const u8,
+    focus_file: []const u8,
+    facts_dirty: bool = false,
+    /// The lists last written (encoded with time 0), to write only changes.
+    last_lists: []u8 = &.{},
+    next_save_s: i64 = 0,
+    next_predict_s: i64 = 0,
+    picks: std.ArrayList(core.influence.Pick) = .empty,
+    icons: core.icons.Set,
+    icons_file: []const u8,
     fd: ?core.ipc.Fd = null,
     next_updates: i64 = 0,
     bytes: std.ArrayList(u8) = .empty,
@@ -294,6 +335,141 @@ const Desk = struct {
         self.store.deinit();
         self.trust.deinit();
         self.sigs.deinit();
+        self.facts.deinit();
+        self.icons.deinit();
+        self.gpa.free(self.last_lists);
+        self.picks.deinit(self.gpa);
+    }
+
+    // ------------------------------------------------- focus and recent
+
+    fn nowS(self: *const Desk) i64 {
+        return @intCast(std.Io.Timestamp.now(self.io, .real).toSeconds());
+    }
+
+    fn loadFacts(self: *Desk) void {
+        const bytes = std.Io.Dir.cwd().readFileAlloc(self.io, self.facts_file, self.gpa, .limited(64 * 1024 * 1024)) catch |err| {
+            if (err != error.FileNotFound) self.out.print("txdesk: cannot read {s}: {s}\n", .{ self.facts_file, @errorName(err) }) catch {};
+            return self.predict(true);
+        };
+        defer self.gpa.free(bytes);
+        var log: core.format.RepairLog = .{};
+        self.facts.decode(bytes, &log) catch |err| {
+            self.out.print("txdesk: {s} is unreadable ({s}); starting without it\n", .{ self.facts_file, @errorName(err) }) catch {};
+        };
+        if (log.total() > 0) self.out.print("txdesk: {s}: {d} damaged facts skipped\n", .{ self.facts_file, log.total() }) catch {};
+        self.out.print("txdesk: {d} uses recorded\n", .{self.facts.uses.items.len}) catch {};
+        self.predict(true);
+    }
+
+    /// The windows on screen changed (opened, closed, keyboard focus).
+    fn windowsChanged(self: *Desk, scene: *const Scene) void {
+        if (scene.snapshot) return;
+        var wins: std.ArrayList(focus.WindowNow) = .empty;
+        defer wins.deinit(self.gpa);
+        // Learning paused: nothing is recorded; uses in progress end now.
+        if (scene.learning) for (scene.windows.items) |*w| {
+            const app = if (w.exe_len > 0) w.exe[0..w.exe_len] else w.app_id[0..w.app_id_len];
+            wins.append(self.gpa, .{ .id = w.id, .app = app, .focused = w.focused }) catch return;
+        };
+        const ch = self.facts.sync(wins.items, self.nowS()) catch return;
+        if (!ch.any()) return;
+        self.facts_dirty = true;
+        if (ch.closed > 0) self.saveFacts();
+        self.predict(false);
+    }
+
+    fn compositorGone(self: *Desk) void {
+        self.facts.closeAll(self.nowS()) catch {};
+        self.facts_dirty = true;
+        self.saveFacts();
+        self.predict(false);
+    }
+
+    fn tick(self: *Desk) void {
+        const now = self.nowS();
+        if (self.facts_dirty and now >= self.next_save_s) self.saveFacts();
+        if (now >= self.next_predict_s) self.predict(false);
+    }
+
+    fn saveFacts(self: *Desk) void {
+        const now = self.nowS();
+        self.next_save_s = now + 60;
+        self.facts.save_count += 1;
+        const bytes = self.facts.encode(self.gpa, now) catch return;
+        defer self.gpa.free(bytes);
+        writePrivate(self.io, self.gpa, self.facts_file, bytes) catch |err| {
+            self.out.print("txdesk: cannot save {s}: {s}\n", .{ self.facts_file, @errorName(err) }) catch {};
+            return;
+        };
+        self.facts_dirty = false;
+    }
+
+    /// Focus, then Recent; written and announced only when they changed
+    /// (or `force`).
+    fn predict(self: *Desk, force: bool) void {
+        const now = self.nowS();
+        self.next_predict_s = now + 60;
+        self.facts.predict(self.gpa, now, localOffset(now), &self.picks) catch return;
+        const lists = core.influence.encode(self.gpa, self.picks.items, 0, .predictor) catch return;
+        if (!force and std.mem.eql(u8, lists, self.last_lists)) {
+            self.gpa.free(lists);
+            return;
+        }
+        self.gpa.free(self.last_lists);
+        self.last_lists = lists;
+        const bytes = core.influence.encode(self.gpa, self.picks.items, now, .predictor) catch return;
+        defer self.gpa.free(bytes);
+        writePrivate(self.io, self.gpa, self.focus_file, bytes) catch |err| {
+            self.out.print("txdesk: cannot save {s}: {s}\n", .{ self.focus_file, @errorName(err) }) catch {};
+            return;
+        };
+        self.out.writeAll("txdesk: focus") catch {};
+        for (self.picks.items) |p| {
+            if (p.list == .focus) self.out.print(" {s}", .{std.fs.path.basename(p.app)}) catch {};
+        }
+        self.out.writeAll(" | recent") catch {};
+        for (self.picks.items) |p| {
+            if (p.list == .recent) self.out.print(" {s}", .{std.fs.path.basename(p.app)}) catch {};
+        }
+        self.out.writeAll("\n") catch {};
+        self.out.flush() catch {};
+        self.notice(.influence_changed);
+    }
+
+    fn notice(self: *Desk, kind: types.DeskNoticeKind) void {
+        if (self.fd == null) return;
+        self.bytes.clearRetainingCapacity();
+        core.format.appendStruct(self.gpa, &self.bytes, types.desk_notice, 1, types.DeskNotice{ .kind = kind }, "") catch return;
+        self.send();
+    }
+
+    fn loadIcons(self: *Desk) void {
+        const bytes = std.Io.Dir.cwd().readFileAlloc(self.io, self.icons_file, self.gpa, .limited(256 * 1024 * 1024)) catch return;
+        defer self.gpa.free(bytes);
+        self.icons.decode(bytes) catch {};
+    }
+
+    /// Draws the icons of new or changed apps; saves and tells the
+    /// compositor when anything changed.
+    fn refreshIcons(self: *Desk) void {
+        const t0 = std.Io.Timestamp.now(self.io, .awake);
+        const changed = icons.refresh(self.gpa, self.io, &self.icons, self.store.apps.items) catch |err| {
+            self.out.print("txdesk: icons failed: {s}\n", .{@errorName(err)}) catch {};
+            return;
+        };
+        if (!changed) return;
+        const bytes = icons.encode(self.gpa, &self.icons) catch return;
+        defer self.gpa.free(bytes);
+        if (std.fs.path.dirname(self.icons_file)) |dir| std.Io.Dir.cwd().createDirPath(self.io, dir) catch {};
+        const tmp = std.fmt.allocPrint(self.gpa, "{s}.tmp", .{self.icons_file}) catch return;
+        defer self.gpa.free(tmp);
+        std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = tmp, .data = bytes }) catch return;
+        std.Io.Dir.renameAbsolute(tmp, self.icons_file, self.io) catch return;
+        const ms = t0.durationTo(std.Io.Timestamp.now(self.io, .awake)).toMilliseconds();
+        self.out.print("txdesk: icons: {d} images, {d} KB, {d} ms\n", .{ self.icons.icons.items.len, bytes.len / 1024, ms }) catch {};
+        self.out.flush() catch {};
+        self.notice(.icons_changed);
     }
 
     fn loadTrust(self: *Desk) void {
@@ -369,6 +545,7 @@ const Desk = struct {
             };
             self.next_updates = now_ms + updates_every_ms;
         }
+        self.refreshIcons();
         const ms = t0.durationTo(std.Io.Timestamp.now(self.io, .awake)).toMilliseconds();
         for (report.changes.items) |c| self.out.print("txdesk: app {s} {s}: {s}\n", .{ @tagName(c.kind), c.id, c.detail }) catch {};
         if (updated > 0) self.out.print("txdesk: update check: {d} apps changed\n", .{updated}) catch {};
@@ -410,6 +587,41 @@ const Desk = struct {
         self.fd = null;
     }
 };
+
+/// History (facts, influence): readable by the user only. A temporary
+/// file renamed over the old one, so a crash never leaves half a file.
+/// TODO: encrypted at rest (Top-Level Design, "Sensitive like the history").
+fn writePrivate(io: std.Io, gpa: std.mem.Allocator, path: []const u8, bytes: []const u8) !void {
+    if (std.fs.path.dirname(path)) |dir| try std.Io.Dir.cwd().createDirPath(io, dir);
+    const tmp = try std.fmt.allocPrint(gpa, "{s}.tmp", .{path});
+    defer gpa.free(tmp);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = tmp, .data = bytes, .flags = .{ .permissions = .fromMode(0o600) } });
+    try std.Io.Dir.renameAbsolute(tmp, path, io);
+}
+
+/// The local time's offset from UTC, for day boundaries.
+fn localOffset(now_s: i64) i64 {
+    const Tm = extern struct {
+        sec: c_int,
+        min: c_int,
+        hour: c_int,
+        mday: c_int,
+        mon: c_int,
+        year: c_int,
+        wday: c_int,
+        yday: c_int,
+        isdst: c_int,
+        gmtoff: c_long,
+        zone: ?[*:0]const u8,
+    };
+    const lt = struct {
+        extern "c" fn localtime_r(t: *const c_long, out: *Tm) ?*Tm;
+    };
+    var tm: Tm = undefined;
+    const t: c_long = @intCast(now_s);
+    if (lt.localtime_r(&t, &tm) == null) return 0;
+    return tm.gmtoff;
+}
 
 fn registryFile(init: std.process.Init) ![]const u8 {
     return stateFile(init, "apps.tslx");

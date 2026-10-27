@@ -324,11 +324,20 @@ pub const Win = struct {
         }
     }
 
+    /// The pointer leaves the surface it was on. A surface the app has
+    /// destroyed gets no leave: its id is free, and an event naming it is
+    /// a fatal protocol error in the app (libwayland "unknown object").
+    fn leavePointer(self: *Win) void {
+        const old = self.pointer_on orelse return;
+        self.pointer_on = null;
+        if (!old.destroyed) self.pointerEvent(1, .{ self.server.nextSerial(), old.id });
+    }
+
     fn movePointer(self: *Win, x: f32, y: f32, time: u32) void {
         const h = self.hit(x, y);
         const on: ?*Surf = if (h) |hh| hh.s else null;
         if (on != self.pointer_on) {
-            if (self.pointer_on) |old| self.pointerEvent(1, .{ self.server.nextSerial(), old.id });
+            self.leavePointer();
             self.pointer_on = on;
             if (h) |hh| self.pointerEvent(0, .{ self.server.nextSerial(), hh.s.id, hh.x, hh.y });
         } else if (h) |hh| {
@@ -341,10 +350,7 @@ pub const Win = struct {
         if (self.xdg == null) return;
         switch (ev) {
             .pointer_motion => |m| self.movePointer(m.x, m.y, time),
-            .pointer_leave => {
-                if (self.pointer_on) |old| self.pointerEvent(1, .{ self.server.nextSerial(), old.id });
-                self.pointer_on = null;
-            },
+            .pointer_leave => self.leavePointer(),
             .pointer_button => |b| {
                 self.movePointer(b.x, b.y, time);
                 // A click outside the open menus closes them, and does
@@ -464,6 +470,7 @@ pub const Win = struct {
         self.kb_entered = false;
         const cl = self.client() orelse return;
         const x = self.xdg orelse return;
+        if (x.surf.destroyed) return;
         for (cl.keyboards.items) |kb| {
             var w = cl.event(kb, 2) catch return;
             w.uint(self.server.nextSerial()) catch return;

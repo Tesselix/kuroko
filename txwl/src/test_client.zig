@@ -159,6 +159,7 @@ test "an app's window: configure, draw, input, popup, close" {
     const shm = try cl.bind(registry, "wl_shm", 1);
     const seat = try cl.bind(registry, "wl_seat", 7);
     const wm = try cl.bind(registry, "xdg_wm_base", 5);
+    const subcomp = try cl.bind(registry, "wl_subcompositor", 1);
     const deco_mgr = try cl.bind(registry, "zxdg_decoration_manager_v1", 1);
     _ = try cl.bind(registry, "wl_output", 4);
 
@@ -265,6 +266,53 @@ test "an app's window: configure, draw, input, popup, close" {
     var mods = cl.find(keyboard, 4).?;
     _ = mods.uint();
     try std.testing.expectEqual(@as(u32, 1), mods.uint()); // shift
+
+    // A subsurface under the pointer (Chrome draws its notifications so)
+    // is destroyed by the app: the pointer moving on must not name it in
+    // a leave, since its id is free (libwayland ends the app on that).
+    {
+        const sub_surface = cl.id();
+        try cl.send(comp, 0, .{sub_surface});
+        const sub = cl.id();
+        try cl.send(subcomp, 1, .{ sub, sub_surface, surface });
+        try cl.send(sub, 1, .{ @as(i32, 20), @as(i32, 5) });
+        const sub_fd = try shmFile(10 * 10 * 4, 0xFFCC3300);
+        var w = try cl.req(shm, 0);
+        const pool = cl.next_id;
+        try w.uint(cl.id());
+        try w.int(10 * 10 * 4);
+        w.end();
+        try cl.conn.queueFd(gpa, sub_fd);
+        cl.conn.flush();
+        const buffer = cl.id();
+        try cl.send(pool, 0, .{ buffer, @as(i32, 0), @as(i32, 10), @as(i32, 10), @as(i32, 40), @as(u32, 1) });
+        try cl.send(sub_surface, 1, .{ buffer, @as(i32, 0), @as(i32, 0) });
+        try cl.send(sub_surface, 6, .{});
+        srv.dispatch();
+        s.input(.{ .pointer_motion = .{ .x = 25, .y = 8 } }, 21 * std.time.ns_per_ms);
+        srv.flush();
+        try cl.pump();
+        var sub_enter = cl.find(pointer, 0) orelse return error.NoEnter;
+        _ = sub_enter.uint();
+        try std.testing.expectEqual(sub_surface, sub_enter.uint());
+
+        try cl.send(sub, 0, .{});
+        try cl.send(sub_surface, 0, .{});
+        srv.dispatch();
+        const before = cl.events.items.len;
+        s.input(.{ .pointer_motion = .{ .x = 3, .y = 3 } }, 22 * std.time.ns_per_ms);
+        srv.flush();
+        try cl.pump();
+        for (cl.events.items[before..]) |e| {
+            if (e.object != pointer or e.opcode != 1) continue;
+            var a: wire.Args = .{ .bytes = e.args };
+            _ = a.uint();
+            try std.testing.expect(a.uint() != sub_surface);
+        }
+        var back = cl.find(pointer, 0) orelse return error.NoEnter;
+        _ = back.uint();
+        try std.testing.expectEqual(surface, back.uint());
+    }
 
     // A popup menu under (2, 2), grabbing; a click outside closes it.
     const pop_surface = cl.id();

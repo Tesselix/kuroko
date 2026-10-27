@@ -16,6 +16,7 @@
 const std = @import("std");
 const core = @import("txcore");
 const font = @import("font.zig");
+const bidi = @import("bidi.zig");
 const draw_list = @import("draw_list.zig");
 
 const Rect = core.Rect;
@@ -77,7 +78,7 @@ pub const Canvas = struct {
             .circle => |o| self.rasterCircle(o.cx, o.cy, o.r, c),
             .line => |o| self.rasterLine(o.x0, o.y0, o.x1, o.y1, o.hw, c),
             .glyph => |o| self.glyphMask(o.x, o.y, o.glyph, c),
-            .image => |o| if (o.exact) self.rasterBlit(o.img, o.dst.x, o.dst.y) else self.rasterBlitScaled(o.img, o.dst, o.alpha),
+            .image => |o| if (o.blend) self.rasterImageAlpha(o.img, o.dst, o.alpha) else if (o.exact) self.rasterBlit(o.img, o.dst.x, o.dst.y) else self.rasterBlitScaled(o.img, o.dst, o.alpha),
         }
     }
 
@@ -388,7 +389,8 @@ pub const Canvas = struct {
 
     // ------------------------------------------------------------- text
 
-    /// Draws text with its top at `y`; returns the advance in logical px.
+    /// Draws text with its top at `y`, in visual order (right-to-left runs
+    /// reversed, `bidi.zig`); returns the advance in logical px.
     pub fn text(self: *Canvas, x: f32, y: f32, str: []const u8, style: font.Style, c: Color) f32 {
         const atlas = font.Fonts.get().atlas(style, self.scale);
         const s: f32 = @floatFromInt(self.scale);
@@ -396,8 +398,9 @@ pub const Canvas = struct {
         const top: i32 = @intFromFloat(@round((y + @as(f32, @floatFromInt(self.oy))) * s));
         const baseline = top + atlas.ascent;
         const start = pen;
-        var it = font.codepoints(str);
-        while (it.next()) |cp| {
+        var buf: [bidi.max]u21 = undefined;
+        var visual = bidi.Line.of(str, &buf);
+        while (visual.next()) |cp| {
             const g = atlas.glyph(cp);
             if (g.w > 0) {
                 const gx: i32 = @as(i32, @intFromFloat(@round(pen))) + g.bearing_x;
@@ -425,7 +428,8 @@ pub const Canvas = struct {
         }
     }
 
-    /// Text cut to `max_w` with an ellipsis at the (logical) end.
+    /// Text cut to `max_w` with an ellipsis at the (logical) end: on the
+    /// right, or on the left in right-to-left text.
     pub fn textEllipsis(self: *Canvas, x: f32, y: f32, str: []const u8, max_w: f32, style: font.Style, c: Color) f32 {
         const m = font.Metrics.of(style, self.scale);
         if (m.width(str) <= max_w) return self.text(x, y, str, style, c);
@@ -439,6 +443,10 @@ pub const Canvas = struct {
             if (w + adv > avail) break;
             w += adv;
             end = it.i;
+        }
+        if (bidi.Line.of(str, &.{}).rtl) {
+            const e = self.text(x, y, ell, style, c);
+            return e + self.text(x + e, y, str[0..end], style, c);
         }
         const a = self.text(x, y, str[0..end], style, c);
         return a + self.text(x + a, y, ell, style, c);
@@ -475,6 +483,33 @@ pub const Canvas = struct {
         const p = self.phys(r);
         if (p.isEmpty() or p.intersect(self.clip).isEmpty()) return;
         self.emit(.{ .image = .{ .img = img, .dst = p, .alpha = alpha, .exact = false } }, .{ .r = 0, .g = 0, .b = 0, .a = alpha });
+    }
+
+    /// An image with its own alpha (an icon), scaled (nearest) into a
+    /// logical rect and faded by `alpha`.
+    pub fn drawImage(self: *Canvas, img: Image, r: Rect, alpha: u8) void {
+        if (img.w <= 0 or img.h <= 0 or img.pixels.len < @as(usize, @intCast(img.w * img.h)) or alpha == 0) return;
+        const p = self.phys(r);
+        if (p.isEmpty() or p.intersect(self.clip).isEmpty()) return;
+        self.emit(.{ .image = .{ .img = img, .dst = p, .alpha = alpha, .exact = false, .blend = true } }, .{ .r = 0, .g = 0, .b = 0, .a = alpha });
+    }
+
+    fn rasterImageAlpha(self: *Canvas, img: Image, p: Rect, alpha: u8) void {
+        const d = p.intersect(self.clip);
+        if (d.isEmpty()) return;
+        var y = d.y;
+        while (y < d.bottom()) : (y += 1) {
+            const sy: i32 = @divTrunc((y - p.y) * img.h, p.h);
+            var x = d.x;
+            while (x < d.right()) : (x += 1) {
+                const sx: i32 = @divTrunc((x - p.x) * img.w, p.w);
+                const v = img.pixels[@intCast(sy * img.w + sx)];
+                const a = ((v >> 24) * alpha + 127) / 255;
+                if (a == 0) continue;
+                const idx: usize = @intCast(y * self.stride + x);
+                self.pixels[idx] = if (a == 255) v | 0xFF000000 else blend(self.pixels[idx], @bitCast(v), a);
+            }
+        }
     }
 
     fn rasterBlitScaled(self: *Canvas, img: Image, p: Rect, alpha: u8) void {

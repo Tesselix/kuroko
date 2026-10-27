@@ -3,6 +3,7 @@
 //! for a GPU renderer.
 
 pub const font = @import("font.zig");
+pub const bidi = @import("bidi.zig");
 pub const canvas = @import("canvas.zig");
 pub const draw_list = @import("draw_list.zig");
 pub const scroll = @import("scroll.zig");

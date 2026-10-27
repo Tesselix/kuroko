@@ -128,7 +128,10 @@ be pointed at it by hand: `WAYLAND_DISPLAY=wayland-tesselix-0 app`. By hand:
 Trust: any installed app is trusted; other apps, files and folders are
 marked by hand with `txdesk trust app|file|folder <path> trusted|untrusted|clear`
 (`txdesk trust list`, `txdesk trust check <path>`). The desktop service's
-log shows each window's app, PID, signature and trust.
+log shows each window's app, PID, signature and trust. txdesk also records
+which apps are used (`facts.tslx`) and writes the launcher's Focus and
+Recent (`focus.tslx`); the launcher shows Focus, Recent, then the other apps.
+The top bar's Learning switch pauses the recording.
 The desktop service's log is `~/.cache/tesselix/txdesk.log`; the
 simulator's is `txsim.log`. Start `run.sh`
 from the VM's console, logged in as yourself: cage needs the console's seat.

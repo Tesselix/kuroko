@@ -1,8 +1,10 @@
 //! Pre-rendered font atlases (Inter, OFL-1.1) stored as Tesselix records.
 //!
 //! Stopgap until the text stack is chosen (Widget Framework, open question).
-//! No shaping and no bidi yet: text is drawn glyph by glyph, left to right.
-//! TODO(text): HarfBuzz/FreeType or pure Zig, UAX #9 bidi, Hebrew.
+//! Each UI atlas has a Hebrew fallback atlas (Noto Sans Hebrew, OFL-1.1) for
+//! the letters Inter lacks. No shaping yet: text is drawn glyph by glyph in
+//! the visual order `bidi.zig` gives; Hebrew points are not drawn.
+//! TODO(text): HarfBuzz/FreeType or pure Zig, full UAX #9.
 
 const std = @import("std");
 const core = @import("txcore");
@@ -43,6 +45,18 @@ const files = struct {
         @embedFile("fonts/semibold-22.tslx"), @embedFile("fonts/semibold-26.tslx"),
         @embedFile("fonts/semibold-30.tslx"), @embedFile("fonts/semibold-40.tslx"),
     };
+    const hebrew_regular = [_][]const u8{
+        @embedFile("fonts/hebrew-regular-11.tslx"), @embedFile("fonts/hebrew-regular-13.tslx"),
+        @embedFile("fonts/hebrew-regular-15.tslx"), @embedFile("fonts/hebrew-regular-20.tslx"),
+        @embedFile("fonts/hebrew-regular-22.tslx"), @embedFile("fonts/hebrew-regular-26.tslx"),
+        @embedFile("fonts/hebrew-regular-30.tslx"), @embedFile("fonts/hebrew-regular-40.tslx"),
+    };
+    const hebrew_semibold = [_][]const u8{
+        @embedFile("fonts/hebrew-semibold-11.tslx"), @embedFile("fonts/hebrew-semibold-13.tslx"),
+        @embedFile("fonts/hebrew-semibold-15.tslx"), @embedFile("fonts/hebrew-semibold-20.tslx"),
+        @embedFile("fonts/hebrew-semibold-22.tslx"), @embedFile("fonts/hebrew-semibold-26.tslx"),
+        @embedFile("fonts/hebrew-semibold-30.tslx"), @embedFile("fonts/hebrew-semibold-40.tslx"),
+    };
 };
 
 pub const Glyph = struct {
@@ -65,6 +79,8 @@ pub const Atlas = struct {
     codepoints: [max_glyphs]u32 = undefined,
     glyphs: [max_glyphs]Glyph = undefined,
     ascii: [95]?u8 = @splat(null),
+    /// Searched for what this atlas lacks.
+    fallback: ?*const Atlas = null,
 
     fn load(self: *Atlas, bytes: []const u8) !void {
         var reader = format.Reader.init(bytes, &types.known);
@@ -86,6 +102,8 @@ pub const Atlas = struct {
             @memcpy(std.mem.asBytes(&g), rest[i * @sizeOf(types.FontGlyph) ..][0..@sizeOf(types.FontGlyph)]);
             const size = @as(usize, g.w) * g.h;
             if (g.offset + size > bitmap.len) return error.BadFontAtlas;
+            // Sorted, for the search in `find`.
+            if (i > 0 and g.codepoint <= self.codepoints[i - 1]) return error.BadFontAtlas;
             self.codepoints[i] = g.codepoint;
             self.glyphs[i] = .{
                 .advance = @as(f32, @floatFromInt(g.advance)) / 64.0,
@@ -99,15 +117,26 @@ pub const Atlas = struct {
         }
     }
 
+    /// The glyph for `cp`, from this atlas or its fallback; '?' if neither
+    /// has it.
     pub fn glyph(self: *const Atlas, cp: u21) *const Glyph {
-        if (cp >= 32 and cp < 127) {
-            if (self.ascii[cp - 32]) |i| return &self.glyphs[i];
-        } else {
-            for (self.codepoints[0..self.count], 0..) |c, i| {
-                if (c == cp) return &self.glyphs[i];
-            }
-        }
+        if (self.find(cp)) |g| return g;
+        if (self.fallback) |f| if (f.find(cp)) |g| return g;
         return &self.glyphs[self.ascii['?' - 32].?];
+    }
+
+    fn find(self: *const Atlas, cp: u21) ?*const Glyph {
+        if (cp >= 32 and cp < 127) {
+            const i = self.ascii[cp - 32] orelse return null;
+            return &self.glyphs[i];
+        }
+        const Ctx = struct {
+            fn order(want: u21, c: u32) std.math.Order {
+                return std.math.order(@as(u32, want), c);
+            }
+        };
+        const i = std.sort.binarySearch(u32, self.codepoints[0..self.count], cp, Ctx.order) orelse return null;
+        return &self.glyphs[i];
     }
 
     /// Width of `text` in physical pixels.
@@ -146,6 +175,7 @@ pub const CodepointIterator = struct {
 
 pub const Fonts = struct {
     atlases: [2][pixel_sizes.len]Atlas = undefined,
+    hebrew: [2][pixel_sizes.len]Atlas = undefined,
 
     var instance: Fonts = .{};
     var loaded = false;
@@ -155,6 +185,11 @@ pub const Fonts = struct {
         if (!loaded) {
             for (files.regular, 0..) |bytes, i| instance.atlases[0][i].load(bytes) catch @panic("bad font atlas");
             for (files.semibold, 0..) |bytes, i| instance.atlases[1][i].load(bytes) catch @panic("bad font atlas");
+            for (files.hebrew_regular, 0..) |bytes, i| instance.hebrew[0][i].load(bytes) catch @panic("bad font atlas");
+            for (files.hebrew_semibold, 0..) |bytes, i| instance.hebrew[1][i].load(bytes) catch @panic("bad font atlas");
+            for (0..2) |w| for (0..pixel_sizes.len) |i| {
+                instance.atlases[w][i].fallback = &instance.hebrew[w][i];
+            };
             loaded = true;
         }
         return &instance;
@@ -223,4 +258,9 @@ test "atlases load and measure" {
     const a2 = f.atlas(.{ .size = .body }, 2);
     try std.testing.expectEqual(@as(u16, 26), a2.pixel_size);
     try std.testing.expect(a.glyph(0x2026).w > 0); // ellipsis present
+    const q = a.glyph('?');
+    try std.testing.expect(a.glyph(0x05E9).w > 0); // shin, from the Hebrew fallback
+    try std.testing.expect(a.glyph(0x05E9) != q);
+    try std.testing.expectEqual(@as(f32, 0), a.glyph(0x05B8).advance); // a point: not drawn
+    try std.testing.expect(a.glyph(0x4E2D) == q); // no CJK yet
 }
