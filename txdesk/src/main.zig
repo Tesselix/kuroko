@@ -17,14 +17,30 @@
 //!   txdesk apps list [--skipped] [--file PATH]
 //!                         print the registry
 //! The file is $XDG_STATE_HOME/tesselix/apps.tslx (~/.local/state/...).
+//!
+//! And the user's trust marks (trust.zig): trust.tslx next to apps.tslx,
+//! sent to the compositor, which decides each window's trust. Any
+//! installed app is trusted unless marked otherwise (provisional). By hand:
+//!   txdesk trust list
+//!   txdesk trust app <binary|app-id> trusted|untrusted|clear
+//!   txdesk trust file <path> trusted|untrusted|clear
+//!   txdesk trust folder <path> trusted|untrusted|clear
+//!   txdesk trust check <path>     what an app binary or a file gets now
+//! A running txdesk notices the change and tells the compositor.
 
 const std = @import("std");
 const core = @import("txcore");
 const types = core.types;
 const apps = @import("apps/root.zig");
+const trust = @import("trust.zig");
 
 const Win = struct {
     id: u64,
+    pid: i32 = 0,
+    exe: [256]u8 = undefined,
+    exe_len: usize = 0,
+    trust: types.Trust = .unknown,
+    app_trust: types.Trust = .unknown,
     title: [128]u8 = undefined,
     title_len: usize = 0,
     app_id: [96]u8 = undefined,
@@ -49,6 +65,20 @@ const Scene = struct {
     }
 
     fn apply(self: *Scene, rec: core.format.Record) !bool {
+        if (rec.type_id == types.scene_identity) {
+            const m = core.format.readStruct(types.SceneIdentity, rec);
+            const exe = core.format.trailing(types.SceneIdentity, rec);
+            const w = self.find(m.window_id) orelse blk: {
+                try self.windows.append(self.gpa, .{ .id = m.window_id });
+                break :blk &self.windows.items[self.windows.items.len - 1];
+            };
+            w.pid = m.pid;
+            w.exe_len = @min(m.exe_len, exe.len, w.exe.len);
+            @memcpy(w.exe[0..w.exe_len], exe[0..w.exe_len]);
+            w.trust = m.trust;
+            w.app_trust = m.app_trust;
+            return !self.snapshot;
+        }
         if (rec.type_id != types.scene_window) return false;
         const m = core.format.readStruct(types.SceneWindow, rec);
         const extra = core.format.trailing(types.SceneWindow, rec);
@@ -94,7 +124,7 @@ const Scene = struct {
         return !self.snapshot;
     }
 
-    fn print(self: *const Scene, out: anytype, t: f64) !void {
+    fn print(self: *const Scene, out: anytype, t: f64, sigs: *trust.Signatures, io: std.Io) !void {
         try out.print("scene t={d:.1}s windows={d}\n", .{ t, self.windows.items.len });
         for (self.windows.items) |w| {
             const h = core.Handle.fromId(w.id);
@@ -107,7 +137,14 @@ const Scene = struct {
                 .working => try out.print(" working", .{}),
                 .failed => try out.print(" error", .{}),
             }
+            try out.print(" {s}", .{core.trust.name(w.trust)});
             try out.print("\n", .{});
+            if (w.exe_len > 0) {
+                const exe = w.exe[0..w.exe_len];
+                try out.print("    app {s} pid {d}, app {s}", .{ exe, w.pid, core.trust.name(w.app_trust) });
+                if (sigs.of(io, exe)) |d| try out.print(", signature {s}", .{&trust.short(d)});
+                try out.print("\n", .{});
+            }
         }
     }
 };
@@ -122,12 +159,13 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len >= 2 and std.mem.eql(u8, args[1], "apps")) return appsCommand(init, args[2..]);
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "trust")) return trustCommand(init, args[2..]);
 
     var path_buf: [512]u8 = undefined;
     const path = try core.ipc.socketPath(&path_buf, core.ipc.compositor_socket);
 
     var stdout_buf: [4096]u8 = undefined;
-    var stdout_w = std.Io.File.stdout().writer(io, &stdout_buf);
+    var stdout_w = std.Io.File.stdout().writerStreaming(io, &stdout_buf);
     const out = &stdout_w.interface;
 
     var scene: Scene = .{ .gpa = gpa };
@@ -144,9 +182,12 @@ pub fn main(init: std.process.Init) !void {
         .home = init.environ_map.get("HOME") orelse "/",
         .store = .init(gpa),
         .link = .init(gpa),
+        .trust = .init(gpa, try stateFile(init, "trust.tslx")),
+        .sigs = .init(gpa),
     };
     defer desk.deinit();
     desk.load();
+    desk.loadTrust();
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(gpa);
@@ -162,11 +203,18 @@ pub fn main(init: std.process.Init) !void {
                 scene.windows.clearRetainingCapacity();
                 try out.print("txdesk: connected\n", .{});
                 desk.sendSnapshot();
+                desk.sendTrust();
             } else |_| if (!waiting_said) {
                 try out.print("txdesk: waiting for the compositor at {s}\n", .{path});
                 waiting_said = true;
             }
             try out.flush();
+        }
+
+        // `txdesk trust ...` changed the marks: reload and resend.
+        if (desk.trust.changedOnDisk(io)) {
+            desk.loadTrust();
+            desk.sendTrust();
         }
 
         const now = std.Io.Timestamp.now(io, .awake).toMilliseconds();
@@ -197,6 +245,11 @@ pub fn main(init: std.process.Init) !void {
             if (rec.type_id == types.desk_request) {
                 const req = core.format.readStruct(types.DeskRequest, rec);
                 if (req.kind == .app_snapshot) desk.sendSnapshot();
+                if (req.kind == .trust_snapshot) desk.sendTrust();
+                continue;
+            }
+            if (rec.type_id == types.trust_request) {
+                desk.trustRequest(rec);
                 continue;
             }
             if (try scene.apply(rec)) changed = true;
@@ -211,7 +264,7 @@ pub fn main(init: std.process.Init) !void {
 
         if (changed) {
             const t = @as(f64, @floatFromInt(std.Io.Timestamp.now(io, .awake).toMilliseconds() - start)) / 1000;
-            try scene.print(out, t);
+            try scene.print(out, t, &desk.sigs, io);
             if (log.total() > 0) try out.print("  (repairs so far: {d})\n", .{log.total()});
             try out.flush();
         }
@@ -228,6 +281,8 @@ const Desk = struct {
     home: []const u8,
     store: apps.store.Store,
     link: apps.link.Link,
+    trust: trust.File,
+    sigs: trust.Signatures,
     fd: ?core.ipc.Fd = null,
     next_updates: i64 = 0,
     bytes: std.ArrayList(u8) = .empty,
@@ -237,6 +292,52 @@ const Desk = struct {
         self.bytes.deinit(self.gpa);
         self.link.deinit();
         self.store.deinit();
+        self.trust.deinit();
+        self.sigs.deinit();
+    }
+
+    fn loadTrust(self: *Desk) void {
+        var log: core.format.RepairLog = .{};
+        self.trust.load(self.gpa, self.io, &log) catch |err| {
+            self.out.print("txdesk: {s} is unreadable ({s}); moved aside, no marks\n", .{ self.trust.path, @errorName(err) }) catch {};
+        };
+        if (log.total() > 0) self.out.print("txdesk: {s}: {d} damaged marks skipped\n", .{ self.trust.path, log.total() }) catch {};
+        self.out.print("txdesk: {d} trust marks\n", .{self.trust.marks.list.items.len}) catch {};
+        self.out.flush() catch {};
+    }
+
+    fn sendTrust(self: *Desk) void {
+        if (self.fd == null) return;
+        self.bytes.clearRetainingCapacity();
+        trust.snapshot(self.gpa, &self.bytes, &self.trust.marks) catch return;
+        self.send();
+    }
+
+    /// The user set or took back a mark in the compositor (the window's
+    /// Security menu): save, then confirm with the mark itself.
+    fn trustRequest(self: *Desk, rec: core.format.Record) void {
+        const r = core.format.readStruct(types.TrustRequest, rec);
+        const path = core.format.trailing(types.TrustRequest, rec);
+        if (r.path_len != path.len or path.len == 0 or path[0] != '/') return;
+        const changed = switch (r.action) {
+            .set => blk: {
+                const digest: trust.Digest = if (r.subject == .app) self.sigs.of(self.io, path) orelse @splat(0) else @splat(0);
+                const now_s: i64 = @intCast(std.Io.Timestamp.now(self.io, .real).toSeconds());
+                break :blk self.trust.marks.set(.{ .subject = r.subject, .level = r.level, .path = path, .set_s = now_s, .digest = digest }) catch false;
+            },
+            .clear => self.trust.marks.clear(r.subject, path),
+            _ => false,
+        };
+        if (!changed) return;
+        self.trust.save(self.gpa, self.io) catch |err| {
+            self.out.print("txdesk: cannot save {s}: {s}\n", .{ self.trust.path, @errorName(err) }) catch {};
+        };
+        self.out.print("txdesk: trust {s} {s} {s}\n", .{ @tagName(r.subject), path, if (r.action == .clear) "cleared" else core.trust.name(r.level) }) catch {};
+        self.out.flush() catch {};
+        if (self.fd == null) return;
+        self.bytes.clearRetainingCapacity();
+        trust.record(self.gpa, &self.bytes, if (r.action == .clear) .cleared else .mark, r.subject, r.level, path) catch return;
+        self.send();
     }
 
     fn load(self: *Desk) void {
@@ -311,10 +412,117 @@ const Desk = struct {
 };
 
 fn registryFile(init: std.process.Init) ![]const u8 {
+    return stateFile(init, "apps.tslx");
+}
+
+/// A file in $XDG_STATE_HOME/tesselix (~/.local/state/tesselix).
+fn stateFile(init: std.process.Init, name: []const u8) ![]const u8 {
     const arena = init.arena.allocator();
-    if (init.environ_map.get("XDG_STATE_HOME")) |st| return std.fs.path.join(arena, &.{ st, "tesselix/apps.tslx" });
+    if (init.environ_map.get("XDG_STATE_HOME")) |st| return std.fs.path.join(arena, &.{ st, "tesselix", name });
     const home = init.environ_map.get("HOME") orelse return error.NoHome;
-    return std.fs.path.join(arena, &.{ home, ".local/state/tesselix/apps.tslx" });
+    return std.fs.path.join(arena, &.{ home, ".local/state/tesselix", name });
+}
+
+// --------------------------------------------------------------- trust
+
+fn trustCommand(init: std.process.Init, args: []const [:0]const u8) !void {
+    const gpa = init.gpa;
+    const io = init.io;
+    var stdout_buf: [8192]u8 = undefined;
+    var stdout_w = std.Io.File.stdout().writerStreaming(io, &stdout_buf);
+    const out = &stdout_w.interface;
+    defer out.flush() catch {};
+    const usage =
+        \\usage: txdesk trust list
+        \\       txdesk trust app <binary|app-id> trusted|untrusted|clear
+        \\       txdesk trust file <path> trusted|untrusted|clear
+        \\       txdesk trust folder <path> trusted|untrusted|clear
+        \\       txdesk trust check <path>
+        \\Any installed app is trusted unless marked otherwise.
+        \\
+    ;
+
+    var file = trust.File.init(gpa, try stateFile(init, "trust.tslx"));
+    defer file.deinit();
+    var log: core.format.RepairLog = .{};
+    file.load(gpa, io, &log) catch |err| {
+        try out.print("{s} is unreadable ({s}); moved aside to .broken, starting empty\n", .{ file.path, @errorName(err) });
+    };
+    if (log.total() > 0) try out.print("{s}: {d} damaged marks skipped\n", .{ file.path, log.total() });
+
+    // The app registry, to know installed apps and app ids.
+    var store = apps.store.Store.init(gpa);
+    defer store.deinit();
+    var alog: core.format.RepairLog = .{};
+    apps.scan.load(gpa, io, try registryFile(init), &store, &alog) catch {};
+
+    const cmd: []const u8 = if (args.len > 0) args[0] else "";
+    if (std.mem.eql(u8, cmd, "list")) {
+        try out.print("{s}: {d} marks (save {d})\n", .{ file.path, file.marks.list.items.len, file.save_count });
+        for (file.marks.list.items) |m| {
+            try out.print("  {s:<6} {s:<9} {s}", .{ @tagName(m.subject), core.trust.name(m.level), m.path });
+            if (m.subject == .app) try out.print("  signature {s}", .{&trust.short(m.digest)});
+            try out.writeAll("\n");
+        }
+        return;
+    }
+    if (std.mem.eql(u8, cmd, "check") and args.len == 2) {
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const path = resolve(io, args[1], &buf) orelse {
+            try out.print("no such file: {s}\n", .{args[1]});
+            return error.BadArgs;
+        };
+        const app = store.findByBinary(path);
+        const installed = if (app) |a| a.status == .installed else false;
+        try out.print("{s}\n  as an app:  {s}", .{ path, core.trust.name(file.marks.appLevel(path, installed)) });
+        if (file.marks.find(.app, path) != null) try out.writeAll(" (marked)") else if (installed) try out.writeAll(" (installed)") else try out.writeAll(" (not an installed app)");
+        try out.print("\n  as a file:  {s}\n", .{core.trust.name(file.marks.objectLevel(path))});
+        return;
+    }
+    const subject: types.TrustSubject = if (std.mem.eql(u8, cmd, "app")) .app else if (std.mem.eql(u8, cmd, "file")) .file else if (std.mem.eql(u8, cmd, "folder")) .folder else {
+        try out.writeAll(usage);
+        return error.BadArgs;
+    };
+    if (args.len != 3) {
+        try out.writeAll(usage);
+        return error.BadArgs;
+    }
+    const what = args[2];
+    const level: ?types.Trust = if (std.mem.eql(u8, what, "trusted")) .trusted else if (std.mem.eql(u8, what, "untrusted")) .untrusted else if (std.mem.eql(u8, what, "clear")) null else {
+        try out.writeAll(usage);
+        return error.BadArgs;
+    };
+
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path: []const u8 = blk: {
+        // An app may be named by its id in the registry.
+        if (subject == .app and std.mem.indexOfScalar(u8, args[1], '/') == null) {
+            if (store.findById(args[1])) |a| break :blk a.binary;
+        }
+        if (resolve(io, args[1], &buf)) |p| break :blk p;
+        // A mark may be taken back after its file is gone.
+        if (level == null and args[1].len > 0 and args[1][0] == '/') break :blk args[1];
+        try out.print("no such {s}: {s}\n", .{ @tagName(subject), args[1] });
+        return error.BadArgs;
+    };
+
+    const changed = if (level) |l| blk: {
+        const digest: trust.Digest = if (subject == .app) trust.digestFile(io, path) catch @splat(0) else @splat(0);
+        const now_s: i64 = @intCast(std.Io.Timestamp.now(io, .real).toSeconds());
+        break :blk try file.marks.set(.{ .subject = subject, .level = l, .path = path, .set_s = now_s, .digest = digest });
+    } else file.marks.clear(subject, path);
+    if (!changed) {
+        try out.print("no change: {s} {s}\n", .{ @tagName(subject), path });
+        return;
+    }
+    try file.save(gpa, io);
+    try out.print("{s} {s}: {s} (saved {s}, save {d})\n", .{ @tagName(subject), path, if (level) |l| core.trust.name(l) else "cleared", file.path, file.save_count });
+}
+
+/// An existing path, absolute, symlinks resolved.
+fn resolve(io: std.Io, path: []const u8, buf: []u8) ?[]const u8 {
+    const n = std.Io.Dir.cwd().realPathFile(io, path, buf) catch return null;
+    return buf[0..n];
 }
 
 // ------------------------------------------------------------ app registry
@@ -323,7 +531,7 @@ fn appsCommand(init: std.process.Init, args: []const [:0]const u8) !void {
     const gpa = init.gpa;
     const io = init.io;
     var stdout_buf: [8192]u8 = undefined;
-    var stdout_w = std.Io.File.stdout().writer(io, &stdout_buf);
+    var stdout_w = std.Io.File.stdout().writerStreaming(io, &stdout_buf);
     const out = &stdout_w.interface;
     defer out.flush() catch {};
 

@@ -20,9 +20,12 @@ touches. Change the code and this file together.
 | Key for "back after a jump" (Look and Controls) | Alt+← (Option+← on a Mac); 16 positions kept | `txwidgets/src/doc_view.zig` |
 | Center marker visibility (Look and Controls) | While scrolling and while the map is open; fades over 0.4 s after 1 s at rest | `txwidgets/src/doc_view.zig` |
 | Exact theme colors (Look and Controls) | First values in `txcore/src/theme.zig`, light and dark | |
-| Text stack and 2D rendering (Widget Framework) | Stopgap: own CPU rasterizer and pre-rendered Inter atlases; no shaping, no bidi, no Hebrew yet | `txwidgets/src/canvas.zig`, `font.zig` |
+| Text stack and 2D rendering (Widget Framework) | Stopgap: own CPU rasterizer and pre-rendered Inter atlases; no shaping, no bidi, no Hebrew yet. The compositor's frame goes to the GPU as a draw list (see "GPU rendering") | `txwidgets/src/canvas.zig`, `font.zig`, `draw_list.zig` |
 | Quick drag out of the panel (Top-Level) | Released within 0.3 s of the press; `quick_drag_ms` | `txcomp/src/compositor.zig` |
 | Where a restored window goes after maximize (Top-Level) | The old tile order; the maximized window keeps its place, or goes last if it came from the panel | `txcomp/src/compositor.zig` |
+| How app and object trust combine (User Signals) | An unknown object leaves the app's level; otherwise the lower of the two | `txcore/src/trust.zig` |
+| Which apps are trusted (User Signals) | Tesselix's own apps always; an installed app (in the registry) unless the user marks it; any other app only when marked | `txcore/src/trust.zig`, `txcomp/src/compositor.zig` |
+| A mark on a folder (User Signals) | Covers every file under it; the nearest marked folder wins, and a file's own mark wins over any folder | `txcore/src/trust.zig` |
 | Footprints (Look and Controls) | A section counts as read after 3 s at the middle of the view while not scrolling; in memory only | `txwidgets/src/doc_view.zig` |
 
 ## Zig version
@@ -53,6 +56,76 @@ touches. Change the code and this file together.
   menu takes on macOS.
 - Launch times are simulated per app (`start_ms`), so the launch placeholder
   and its progress can be seen.
+
+## GPU rendering (txgl)
+
+- **Draw list.** `Canvas` reduces every call to six physical-pixel
+  primitives (fill, rounded rect, circle, line, glyph, image) and sends
+  each through one function: rasterized at once, or recorded with its clip
+  (`Canvas.recorder`). The compositor's `render` is unchanged; the backend
+  chooses which canvas it gets.
+- **CPU and GPU draw the same list.** `Canvas.replay` rasterizes a recording
+  with the same code, so it is pixel-identical to drawing directly (tested
+  per primitive and for whole compositor frames, which also checks that the
+  core is deterministic).
+- **Renderer** (`txgl/src/renderer.zig`): one shader; every primitive is a
+  quad. Shapes use the canvas's signed-distance formulas, glyphs one shared
+  R8 texture packed on first use, images RGBA textures (swizzled from
+  0xAARRGGBB in the shader). Clips are scissor rects; quads are batched
+  until the clip or the image changes. Premultiplied output.
+- **Window pictures are kept on the GPU.** Each window buffer has an id (new
+  per buffer) and a version (new per redraw); a texture is uploaded only
+  when the version changes, and dropped after 120 frames unused. A closing
+  window's shrinking picture keeps its id, so it is never uploaded again.
+- **GL versions:** OpenGL ES 3.0 on Linux, OpenGL 3.3 core on macOS (its
+  newest GL is 4.1). Functions are loaded at run time from the backend's
+  loader (SDL now, EGL on DRM later); nothing links libGL.
+- **Scaled pictures are smoothed** on the GPU (linear filtering); the CPU
+  picks nearest pixels. Thumbnails differ slightly between the two paths.
+- **Simulator:** GPU by default; `--cpu` or `TX_GPU=off` keeps the CPU path,
+  and the CPU is the fallback if no GL context or shader works.
+  `--snapshot FILE --gpu` reads the GPU frame back (to compare with the
+  CPU's).
+- **Measured** (`--tiled`, 12 s, same session): VM (virgl → ANGLE → Metal,
+  1920x1163) frame build 4.1 ms mean on the GPU, 8.5 ms on the CPU; Mac
+  4.2 ms and 7.3 ms.
+- **Not yet:** Wayland apps' buffers are still copied into the window
+  picture on the CPU (then uploaded); next they become textures of their
+  own, then `linux-dmabuf` (no copy at all). The first frame is slow
+  (shaders compile, glyphs upload).
+
+## Identity and trust
+
+- **Who a window belongs to.** txwl takes the client's PID from the socket
+  (`SO_PEERCRED`) and its binary from `/proc/<pid>/exe` at connect time. The
+  compositor keeps both per window and publishes them before the window's
+  `opened` record (`SceneIdentity`, with the window's trust and the app's
+  part of it), and again when the trust changes.
+- **Marks.** txdesk keeps the user's marks in `trust.tslx` next to
+  `apps.tslx` (`TrustMark`: app, file or folder; trusted or untrusted; the
+  time; for an app, its signature: SHA-256 of the binary). It sends them to
+  the compositor on connect (`DeskTrust` snapshot) and when they change.
+  `txdesk trust ...` edits the file; a running txdesk notices (stat) and
+  resends.
+- **One set of rules** (`txcore/src/trust.zig`), used by both txdesk and the
+  compositor. The compositor decides; txdesk only stores.
+- **An installed app counts only by its own binary.** A client that claims
+  an installed app's id (Wayland app id) with another binary gets no trust
+  from it: shown on the VM with a copy of Alacritty at another path.
+- **Marking from the compositor** (`requestTrust`, `markWindowApp`,
+  `markWindowObject`): applies at once, then goes to txdesk
+  (`TrustRequest`), which saves it and confirms. This is what the window's
+  Security menu will call; the menu itself is not built yet (title-bar menus
+  are labels only).
+- **Signatures** are computed by txdesk (the compositor never reads a
+  binary): when the user marks an app, and for each window's binary in its
+  scene printout, cached per file version (size, time, inode). Recorded,
+  not yet checked against marks.
+- **The object in a window** is set through `setWindowObject`; nothing
+  feeds it yet (fact 2 in User Signals: Tesselix apps, AT-SPI, open files).
+  Until then a window's trust is its app's.
+- On macOS (the simulator) there is no `/proc`: outside apps have no binary,
+  so they are untrusted unless marked; Tesselix's own apps are trusted.
 
 ## Animation over slow frames
 
@@ -189,11 +262,12 @@ touches. Change the code and this file together.
 - A launch placeholder counts as growable until the app attaches; the layout may adjust once when the app reports its real size.
 - No clipboard, no text area, no fill helper, no search field, no date picker
   yet.
-- The launcher uses a solid tint; the blurred snapshot needs the GPU renderer.
+- The launcher uses a solid tint; the blurred snapshot needs a blur pass in the GPU renderer.
 - The panel (minimized windows) has no hover preview and no scrolling; entries that do not fit above the apps button are not shown.
 - Full-screen spaces exist only for full-screen windows; there are no general workspaces yet.
 - A window that goes to the panel before it was ever tiled is drawn at its optimal size for the thumbnail.
 - Menus in the title bar are labels only; dropdowns are not built.
 - Scaled-down unfocused windows (multi-level scaling) are not done; windows
   that do not fit are resized.
-- No peer-credential check on sockets yet (`SO_PEERCRED`, Tessel Store).
+- The compositor's own socket (txdesk and other services) has no
+  peer-credential check yet (Tessel Store); Wayland clients do.

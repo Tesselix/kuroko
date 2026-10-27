@@ -1,8 +1,14 @@
-//! CPU rasterizer into a 32-bit ARGB pixel buffer.
+//! CPU rasterizer into a 32-bit ARGB pixel buffer, or a recorder of the
+//! same drawing into a draw list (draw_list.zig) for the GPU renderer.
 //!
 //! Every drawing call takes logical coordinates; the canvas multiplies by
 //! its integer scale. `hairline*` calls draw one physical pixel, which is
 //! half a logical pixel at 2× (Look and Controls, Borders).
+//!
+//! Each call is reduced to a few physical-pixel primitives (`Op`) that go
+//! through `emit`: rasterized at once, or recorded with the current clip.
+//! Replaying a recording rasterizes the same primitives with the same code,
+//! so a recorded frame drawn on the CPU is identical to one drawn directly.
 //!
 //! Open question (Widget Framework): own rasterizer or a library (pixman,
 //! Cairo, a pure-Zig 2D library). This one covers what v0 needs.
@@ -10,9 +16,13 @@
 const std = @import("std");
 const core = @import("txcore");
 const font = @import("font.zig");
+const draw_list = @import("draw_list.zig");
 
 const Rect = core.Rect;
 const Color = core.Color;
+pub const DrawList = draw_list.DrawList;
+pub const Op = draw_list.Op;
+pub const Image = draw_list.Image;
 
 pub const Canvas = struct {
     pixels: []u32,
@@ -26,6 +36,9 @@ pub const Canvas = struct {
     /// Logical translation applied to every call.
     ox: i32 = 0,
     oy: i32 = 0,
+    /// Recording: drawing calls append to this list instead of touching
+    /// `pixels` (which is empty).
+    list: ?*DrawList = null,
 
     pub fn init(pixels: []u32, width: i32, height: i32, stride: i32, scale: i32) Canvas {
         return .{
@@ -36,6 +49,49 @@ pub const Canvas = struct {
             .scale = scale,
             .clip = .{ .x = 0, .y = 0, .w = width, .h = height },
         };
+    }
+
+    /// A canvas of the given physical size that records into `list`.
+    pub fn recorder(list: *DrawList, width: i32, height: i32, scale: i32) Canvas {
+        var cv = init(&.{}, width, height, width, scale);
+        cv.list = list;
+        return cv;
+    }
+
+    pub fn recording(self: *const Canvas) bool {
+        return self.list != null;
+    }
+
+    fn emit(self: *Canvas, op: Op, c: Color) void {
+        if (self.list) |l| {
+            l.add(.{ .clip = self.clip, .color = c, .op = op });
+            return;
+        }
+        self.exec(op, c);
+    }
+
+    fn exec(self: *Canvas, op: Op, c: Color) void {
+        switch (op) {
+            .fill => |r| self.rasterFill(r, c),
+            .round => |o| if (o.stroke > 0) self.rasterRoundStroke(o.r, o.rad, o.stroke, c) else self.rasterRoundFill(o.r, o.rad, c),
+            .circle => |o| self.rasterCircle(o.cx, o.cy, o.r, c),
+            .line => |o| self.rasterLine(o.x0, o.y0, o.x1, o.y1, o.hw, c),
+            .glyph => |o| self.glyphMask(o.x, o.y, o.glyph, c),
+            .image => |o| if (o.exact) self.rasterBlit(o.img, o.dst.x, o.dst.y) else self.rasterBlitScaled(o.img, o.dst, o.alpha),
+        }
+    }
+
+    /// Draws a recording into this (pixel) canvas, each primitive under
+    /// its recorded clip.
+    pub fn replay(self: *Canvas, list: *const DrawList) void {
+        std.debug.assert(self.list == null);
+        const old = self.clip;
+        defer self.clip = old;
+        for (list.cmds.items) |cmd| {
+            self.clip = cmd.clip.intersect(old);
+            if (self.clip.isEmpty()) continue;
+            self.exec(cmd.op, cmd.color);
+        }
     }
 
     pub fn logicalWidth(self: *const Canvas) i32 {
@@ -88,6 +144,11 @@ pub const Canvas = struct {
     }
 
     fn fillPhys(self: *Canvas, pr: Rect, c: Color) void {
+        if (pr.intersect(self.clip).isEmpty() or c.a == 0) return;
+        self.emit(.{ .fill = pr }, c);
+    }
+
+    fn rasterFill(self: *Canvas, pr: Rect, c: Color) void {
         const r = pr.intersect(self.clip);
         if (r.isEmpty() or c.a == 0) return;
         var y = r.y;
@@ -196,9 +257,14 @@ pub const Canvas = struct {
         const p = self.phys(r);
         const s: f32 = @floatFromInt(self.scale);
         const rad = @min(radius * s, @as(f32, @floatFromInt(@min(p.w, p.h))) / 2);
+        if (p.intersect(self.clip).isEmpty()) return;
+        self.emit(.{ .round = .{ .r = p, .rad = rad, .stroke = 0 } }, c);
+    }
+
+    fn rasterRoundFill(self: *Canvas, p: Rect, rad: f32, c: Color) void {
         const band: i32 = @intFromFloat(@ceil(rad));
         // Middle band: plain fill.
-        self.fillPhys(.{ .x = p.x, .y = p.y + band, .w = p.w, .h = p.h - 2 * band }, c);
+        self.rasterFill(.{ .x = p.x, .y = p.y + band, .w = p.w, .h = p.h - 2 * band }, c);
         const x0: f32 = @floatFromInt(p.x);
         const y0: f32 = @floatFromInt(p.y);
         const x1: f32 = @floatFromInt(p.right());
@@ -225,6 +291,11 @@ pub const Canvas = struct {
         const s: f32 = @floatFromInt(self.scale);
         const w: f32 = if (t <= 0) 1 else t * s;
         const rad = @min(radius * s, @as(f32, @floatFromInt(@min(p.w, p.h))) / 2);
+        if (p.intersect(self.clip).isEmpty()) return;
+        self.emit(.{ .round = .{ .r = p, .rad = rad, .stroke = w } }, c);
+    }
+
+    fn rasterRoundStroke(self: *Canvas, p: Rect, rad: f32, w: f32, c: Color) void {
         const band: i32 = @as(i32, @intFromFloat(@ceil(@max(rad, w)))) + 1;
         const x0: f32 = @floatFromInt(p.x);
         const y0: f32 = @floatFromInt(p.y);
@@ -252,7 +323,10 @@ pub const Canvas = struct {
         const s: f32 = @floatFromInt(self.scale);
         const pcx = (cx + @as(f32, @floatFromInt(self.ox))) * s;
         const pcy = (cy + @as(f32, @floatFromInt(self.oy))) * s;
-        const pr = radius * s;
+        self.emit(.{ .circle = .{ .cx = pcx, .cy = pcy, .r = radius * s } }, c);
+    }
+
+    fn rasterCircle(self: *Canvas, pcx: f32, pcy: f32, pr: f32, c: Color) void {
         const x0: i32 = @intFromFloat(@floor(pcx - pr - 1));
         const x1: i32 = @intFromFloat(@ceil(pcx + pr + 1));
         const y0: i32 = @intFromFloat(@floor(pcy - pr - 1));
@@ -277,7 +351,10 @@ pub const Canvas = struct {
         const y0 = (ay + oy) * s;
         const x1 = (bx + ox) * s;
         const y1 = (by + oy) * s;
-        const hw = width * s / 2;
+        self.emit(.{ .line = .{ .x0 = x0, .y0 = y0, .x1 = x1, .y1 = y1, .hw = width * s / 2 } }, c);
+    }
+
+    fn rasterLine(self: *Canvas, x0: f32, y0: f32, x1: f32, y1: f32, hw: f32, c: Color) void {
         const minx: i32 = @intFromFloat(@floor(@min(x0, x1) - hw - 1));
         const maxx: i32 = @intFromFloat(@ceil(@max(x0, x1) + hw + 1));
         const miny: i32 = @intFromFloat(@floor(@min(y0, y1) - hw - 1));
@@ -325,7 +402,7 @@ pub const Canvas = struct {
             if (g.w > 0) {
                 const gx: i32 = @as(i32, @intFromFloat(@round(pen))) + g.bearing_x;
                 const gy: i32 = baseline - g.bearing_y;
-                self.glyphMask(gx, gy, g, c);
+                self.emit(.{ .glyph = .{ .x = gx, .y = gy, .glyph = g } }, c);
             }
             pen += g.advance;
         }
@@ -369,9 +446,17 @@ pub const Canvas = struct {
 
     // -------------------------------------------------------- compositing
 
-    /// Copies an opaque source buffer to a physical position, clipped.
-    pub fn blit(self: *Canvas, src: []const u32, src_w: i32, src_h: i32, dx: i32, dy: i32) void {
-        const dst = (Rect{ .x = dx, .y = dy, .w = src_w, .h = src_h }).intersect(self.clip);
+    /// Copies an opaque image to a physical position, clipped.
+    pub fn blit(self: *Canvas, img: Image, dx: i32, dy: i32) void {
+        const dst = Rect{ .x = dx, .y = dy, .w = img.w, .h = img.h };
+        if (img.pixels.len == 0 or dst.intersect(self.clip).isEmpty()) return;
+        self.emit(.{ .image = .{ .img = img, .dst = dst, .alpha = 255, .exact = true } }, .{ .r = 0, .g = 0, .b = 0, .a = 255 });
+    }
+
+    fn rasterBlit(self: *Canvas, img: Image, dx: i32, dy: i32) void {
+        const src = img.pixels;
+        const src_w = img.w;
+        const dst = (Rect{ .x = dx, .y = dy, .w = img.w, .h = img.h }).intersect(self.clip);
         if (dst.isEmpty()) return;
         var y = dst.y;
         while (y < dst.bottom()) : (y += 1) {
@@ -383,10 +468,19 @@ pub const Canvas = struct {
         }
     }
 
-    /// Nearest-neighbour scaled copy into a logical rect (thumbnails).
-    pub fn blitScaled(self: *Canvas, src: []const u32, src_w: i32, src_h: i32, r: Rect, alpha: u8) void {
-        if (src_w <= 0 or src_h <= 0) return;
+    /// Nearest-neighbour scaled copy into a logical rect (thumbnails). The
+    /// image is opaque; `alpha` fades all of it.
+    pub fn blitScaled(self: *Canvas, img: Image, r: Rect, alpha: u8) void {
+        if (img.w <= 0 or img.h <= 0 or img.pixels.len == 0 or alpha == 0) return;
         const p = self.phys(r);
+        if (p.isEmpty() or p.intersect(self.clip).isEmpty()) return;
+        self.emit(.{ .image = .{ .img = img, .dst = p, .alpha = alpha, .exact = false } }, .{ .r = 0, .g = 0, .b = 0, .a = alpha });
+    }
+
+    fn rasterBlitScaled(self: *Canvas, img: Image, p: Rect, alpha: u8) void {
+        const src = img.pixels;
+        const src_w = img.w;
+        const src_h = img.h;
         const d = p.intersect(self.clip);
         if (d.isEmpty()) return;
         var y = d.y;

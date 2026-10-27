@@ -7,6 +7,7 @@
 //!   0x03xx  desktop services → compositor (actions)
 //!   0x04xx  widget protocol (Mode B), reserved
 //!   0x05xx  app registry (txdesk's apps.tslx)
+//!   0x06xx  trust marks (txdesk's trust.tslx)
 //!   0x7Fxx  tests
 
 const std = @import("std");
@@ -15,11 +16,16 @@ const format = @import("format.zig");
 pub const font_atlas: u16 = 0x0101;
 pub const scene_window: u16 = 0x0201;
 pub const desk_request: u16 = 0x0202;
+pub const scene_identity: u16 = 0x0203;
+pub const trust_request: u16 = 0x0204;
 pub const desk_app: u16 = 0x0301;
+pub const desk_trust: u16 = 0x0302;
 pub const apps_header: u16 = 0x0501;
 pub const app_entry: u16 = 0x0502;
 pub const scan_entry: u16 = 0x0503;
 pub const search_path: u16 = 0x0504;
+pub const trust_header: u16 = 0x0601;
+pub const trust_mark: u16 = 0x0602;
 
 /// Every type this build understands, with its newest version.
 pub const known = [_]format.Known{
@@ -31,6 +37,11 @@ pub const known = [_]format.Known{
     .{ .type_id = app_entry, .max_version = 1 },
     .{ .type_id = scan_entry, .max_version = 1 },
     .{ .type_id = search_path, .max_version = 1 },
+    .{ .type_id = scene_identity, .max_version = 1 },
+    .{ .type_id = trust_request, .max_version = 1 },
+    .{ .type_id = desk_trust, .max_version = 1 },
+    .{ .type_id = trust_header, .max_version = 1 },
+    .{ .type_id = trust_mark, .max_version = 1 },
 };
 
 /// Window status shown on the bottom border (Top-Level Design, "Bottom
@@ -255,7 +266,7 @@ pub const DeskAppString = enum(u16) {
     available_version,
 };
 
-pub const DeskRequestKind = enum(u8) { app_snapshot, _ };
+pub const DeskRequestKind = enum(u8) { app_snapshot, trust_snapshot, _ };
 
 /// Compositor → txdesk.
 pub const DeskRequest = extern struct {
@@ -268,4 +279,102 @@ comptime {
     format.checkPortable(DeskRequest);
     std.debug.assert(@sizeOf(DeskApp) == 16);
     std.debug.assert(@sizeOf(DeskRequest) == 8);
+}
+
+// ------------------------------------------------------------- trust
+//
+// Trust is the app and the object open in its window together
+// (docs/user-signals.md). The user marks apps, files and folders; txdesk
+// keeps the marks in trust.tslx (one TrustHeader, then TrustMark records)
+// and sends them to the compositor (DeskTrust), which decides each
+// window's trust with the shared rules in txcore/src/trust.zig.
+
+pub const Trust = enum(u8) {
+    /// Nothing known (no mark, and the rule does not say).
+    unknown,
+    untrusted,
+    trusted,
+    _,
+};
+pub const TrustSubject = enum(u8) { app, file, folder, _ };
+
+pub const TrustHeader = extern struct {
+    /// Goes up by one with every save.
+    save_count: u64,
+};
+
+/// One mark set by the user. Trailing data: the absolute path (an app's
+/// binary, symlinks resolved; a file; a folder).
+pub const TrustMark = extern struct {
+    subject: TrustSubject,
+    level: Trust,
+    _pad0: u16 = 0,
+    path_len: u32,
+    /// Unix seconds when it was set.
+    set_s: i64,
+    /// An app's signature when it was marked: SHA-256 of its binary.
+    /// Zeros for files and folders.
+    digest: [32]u8,
+};
+
+pub const DeskTrustKind = enum(u8) {
+    snapshot_begin,
+    /// A mark, new or changed.
+    mark,
+    /// A mark the user took back.
+    cleared,
+    snapshot_end,
+    _,
+};
+
+/// txdesk → compositor: the marks. A snapshot when it connects (or is
+/// asked), then each change. Trailing data: the path.
+pub const DeskTrust = extern struct {
+    kind: DeskTrustKind,
+    subject: TrustSubject,
+    level: Trust,
+    _pad0: u8 = 0,
+    path_len: u32,
+};
+
+pub const TrustAction = enum(u8) { set, clear, _ };
+
+/// Compositor → txdesk: the user set or took back a mark (the window's
+/// Security menu). txdesk saves it and sends it back as a DeskTrust.
+/// Trailing data: the path.
+pub const TrustRequest = extern struct {
+    action: TrustAction,
+    subject: TrustSubject,
+    level: Trust,
+    _pad0: u8 = 0,
+    path_len: u32,
+};
+
+/// Compositor → services: who a window belongs to, sent before its
+/// `opened` SceneWindow and again when its trust changes. Trailing data:
+/// the binary (/proc/<pid>/exe), "" for Tesselix's own in-process apps.
+pub const SceneIdentity = extern struct {
+    window_id: u64,
+    /// 0 when unknown (Tesselix's own apps in the simulator).
+    pid: i32,
+    /// The window's trust as the compositor decided it.
+    trust: Trust,
+    /// The app's part of it.
+    app_trust: Trust,
+    _pad0: u16 = 0,
+    exe_len: u32,
+    _pad1: u32 = 0,
+};
+
+comptime {
+    format.checkPortable(TrustHeader);
+    format.checkPortable(TrustMark);
+    format.checkPortable(DeskTrust);
+    format.checkPortable(TrustRequest);
+    format.checkPortable(SceneIdentity);
+    std.debug.assert(@sizeOf(TrustHeader) == 8);
+    std.debug.assert(@sizeOf(TrustMark) == 48);
+    std.debug.assert(@sizeOf(DeskTrust) == 8);
+    std.debug.assert(@sizeOf(TrustRequest) == 8);
+    std.debug.assert(@sizeOf(SceneIdentity) == 24);
 }

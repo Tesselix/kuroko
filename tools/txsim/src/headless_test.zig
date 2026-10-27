@@ -63,6 +63,64 @@ test "headless session: launch, tile, input, shelve, close" {
     try std.testing.expectEqual(@as(usize, 1), comp.tiles.items.len);
 }
 
+test "a recorded frame replayed on the CPU equals the frame drawn directly" {
+    // Two compositors driven the same way: one draws straight into pixels,
+    // the other records a draw list (as for the GPU) that is then replayed.
+    // Also checks that the core is deterministic for the same inputs.
+    const gpa = std.testing.allocator;
+    const w = 1280;
+    const h = 800;
+    const direct = try gpa.alloc(u32, w * h);
+    defer gpa.free(direct);
+    const replayed = try gpa.alloc(u32, w * h);
+    defer gpa.free(replayed);
+
+    const a = try txcomp.Compositor.init(gpa, &apps, .{ .w = w, .h = h }, 1, .{});
+    defer a.deinit();
+    const b = try txcomp.Compositor.init(gpa, &apps, .{ .w = w, .h = h }, 1, .{});
+    defer b.deinit();
+    var list = tw.DrawList.init(gpa);
+    defer list.deinit();
+
+    var now: i64 = 0;
+    for ([_]usize{ 2, 4, 3, 1, 0 }) |i| {
+        _ = try a.launch(i, now);
+        _ = try b.launch(i, now);
+    }
+    var cva = tw.Canvas.init(direct, w, h, w, 1);
+    var cvr = tw.Canvas.init(replayed, w, h, w, 1);
+    var checked: usize = 0;
+    var frame: usize = 0;
+    while (frame < 160) : (frame += 1) {
+        now += 16 * ms;
+        const ev: ?core.input.Event = switch (frame) {
+            100 => .{ .pointer_motion = .{ .x = 640, .y = 400 } },
+            // Close the focused window: its shrinking picture is a scaled,
+            // fading image.
+            110 => .{ .key = .{ .key = .x, .pressed = true, .mods = .{ .super = true } } },
+            // The launcher over everything.
+            130 => .{ .key = .{ .key = .super, .pressed = true, .mods = .{} } },
+            131 => .{ .key = .{ .key = .super, .pressed = false, .mods = .{} } },
+            else => null,
+        };
+        for ([_]*txcomp.Compositor{ a, b }) |comp| {
+            if (ev) |e| comp.handleInput(e, now);
+            _ = comp.tick(now);
+        }
+        a.render(&cva, now);
+        list.reset();
+        var rec = tw.Canvas.recorder(&list, w, h, 1);
+        b.render(&rec, now);
+        try std.testing.expectEqual(@as(u32, 0), list.dropped);
+        if (frame % 10 == 0 or (frame >= 110 and frame < 128)) {
+            cvr.replay(&list);
+            try std.testing.expectEqualSlices(u32, direct, replayed);
+            checked += 1;
+        }
+    }
+    try std.testing.expect(checked > 20);
+}
+
 test "dragging the shared border between two windows resizes both slots" {
     const gpa = std.testing.allocator;
     const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
@@ -554,16 +612,93 @@ test "an app's window takes its launch placeholder; an unknown app gets a tile" 
 
     // Its window arrives: same tile, no second window.
     const s1 = try controls.createStopwatch(gpa);
-    comp.adoptWindow(s1, "/bin/sh", now);
+    comp.adoptWindow(s1, .{ .pid = 4242, .exe = "/bin/sh" }, now);
     try std.testing.expectEqual(@as(usize, 1), comp.tiles.items.len);
     _ = comp.tick(now);
 
     // A window of an app the registry does not know: a tile of its own.
     const s2 = try controls.createStopwatch(gpa);
-    comp.adoptWindow(s2, "/usr/local/bin/unknown-app", now);
+    comp.adoptWindow(s2, .{ .pid = 4243, .exe = "/usr/local/bin/unknown-app" }, now);
     try std.testing.expectEqual(@as(usize, 2), comp.tiles.items.len);
     try std.testing.expect(comp.app_infos.items[comp.app_infos.items.len - 1].hidden);
     _ = comp.tick(now + 300 * ms);
+}
+
+fn feed(comp: *txcomp.Compositor, bytes: []const u8) void {
+    var reader = core.format.Reader.init(bytes, &core.types.known);
+    while (reader.next()) |rec| comp.deskRecordForTest(rec);
+}
+
+fn deskTrust(gpa: std.mem.Allocator, out: *std.ArrayList(u8), kind: core.types.DeskTrustKind, subject: core.types.TrustSubject, level: core.types.Trust, path: []const u8) !void {
+    try core.format.appendStruct(gpa, out, core.types.desk_trust, 1, core.types.DeskTrust{
+        .kind = kind,
+        .subject = subject,
+        .level = level,
+        .path_len = @intCast(path.len),
+    }, path);
+}
+
+test "window trust: own apps and installed apps are trusted, others by the user's marks" {
+    const gpa = std.testing.allocator;
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+
+    // The registry: /bin/sh is installed, under the Stopwatch's app id, so
+    // an impostor can claim that id.
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try deskApp(gpa, &out, .snapshot_begin, .installed, 0, &.{}, &.{});
+    try deskApp(gpa, &out, .app, .installed, 0, &.{ "/bin/sh", "org.tesselix.stopwatch", "Shell", "", "1.0", "" }, &.{"/bin/sh"});
+    try deskApp(gpa, &out, .snapshot_end, .installed, 0, &.{}, &.{});
+    feed(comp, out.items);
+
+    var now: i64 = 0;
+    const own = try comp.launch(0, now);
+    try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(own).?.window);
+
+    // The installed app's own binary: trusted.
+    comp.adoptWindow(try controls.createStopwatch(gpa), .{ .pid = 100, .exe = "/bin/sh" }, now);
+    const sh = comp.tiles.items[comp.tiles.items.len - 1];
+    try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(sh).?.app);
+    try std.testing.expectEqual(@as(i32, 100), comp.trustOf(sh).?.pid);
+
+    // Another binary claiming the same app id: not trusted.
+    comp.adoptWindow(try controls.createStopwatch(gpa), .{ .pid = 101, .exe = "/tmp/impostor" }, now);
+    const fake = comp.tiles.items[comp.tiles.items.len - 1];
+    try std.testing.expect(!fake.eql(sh));
+    try std.testing.expectEqual(core.types.Trust.untrusted, comp.trustOf(fake).?.app);
+
+    // An app nobody installed: untrusted until the user marks it.
+    comp.adoptWindow(try controls.createStopwatch(gpa), .{ .pid = 102, .exe = "/home/u/bin/tool" }, now);
+    const tool = comp.tiles.items[comp.tiles.items.len - 1];
+    try std.testing.expectEqual(core.types.Trust.untrusted, comp.trustOf(tool).?.window);
+    out.clearRetainingCapacity();
+    try deskTrust(gpa, &out, .snapshot_begin, .app, .unknown, "");
+    try deskTrust(gpa, &out, .mark, .app, .trusted, "/home/u/bin/tool");
+    try deskTrust(gpa, &out, .mark, .folder, .untrusted, "/home/u/Downloads");
+    try deskTrust(gpa, &out, .snapshot_end, .app, .unknown, "");
+    feed(comp, out.items);
+    try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(tool).?.window);
+
+    // A file from an untrusted folder in a trusted app: the window is not.
+    comp.setWindowObject(sh, "/home/u/Downloads/invoice.pdf");
+    try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(sh).?.app);
+    try std.testing.expectEqual(core.types.Trust.untrusted, comp.trustOf(sh).?.window);
+    // The user trusts that file: it applies at once.
+    comp.markWindowObject(sh, .trusted);
+    try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(sh).?.window);
+
+    // txdesk takes the app mark back: the tool is untrusted again.
+    out.clearRetainingCapacity();
+    try deskTrust(gpa, &out, .cleared, .app, .unknown, "/home/u/bin/tool");
+    feed(comp, out.items);
+    try std.testing.expectEqual(core.types.Trust.untrusted, comp.trustOf(tool).?.window);
+
+    // Tesselix's own apps cannot be marked.
+    comp.markWindowApp(own, .untrusted);
+    try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(own).?.window);
+    now += 16 * ms;
+    _ = comp.tick(now);
 }
 
 test {

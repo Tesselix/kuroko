@@ -63,6 +63,15 @@ pub fn build(b: *std.Build) void {
             .{ .name = "txwidgets", .module = widgets },
         },
     });
+    const gpu = b.addModule("txgl", .{
+        .root_source_file = b.path("txgl/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "txcore", .module = core },
+            .{ .name = "txwidgets", .module = widgets },
+        },
+    });
     const controls = b.addModule("controls", .{
         .root_source_file = b.path("apps/controls/src/root.zig"),
         .target = target,
@@ -93,12 +102,18 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{.{ .name = "txcore", .module = core }},
     });
+    const trust_test = b.createModule(.{
+        .root_source_file = b.path("txdesk/src/trust.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "txcore", .module = core }},
+    });
     const stub_test = b.createModule(.{
         .root_source_file = b.path("tools/txsim/src/sdl_stub.zig"),
         .target = target,
         .optimize = optimize,
     });
-    for ([_]*std.Build.Module{ core, widgets, comp, wl, controls, headless, stub_test, apps_test }) |m| {
+    for ([_]*std.Build.Module{ core, widgets, comp, wl, gpu, controls, headless, stub_test, apps_test, trust_test }) |m| {
         const t = b.addTest(.{ .root_module = m });
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
@@ -134,6 +149,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "txcomp", .module = comp },
                 .{ .name = "controls", .module = controls },
                 .{ .name = "txwl", .module = wl },
+                .{ .name = "txgl", .module = gpu },
             },
         });
         // SDL3 is declared by hand in tools/txsim/src/sdl.zig (no C headers

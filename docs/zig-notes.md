@@ -28,11 +28,16 @@ whenever the pin moves.
 
 ```zig
 var buf: [4096]u8 = undefined;
-var w = std.Io.File.stdout().writer(io, &buf);
+var w = std.Io.File.stdout().writerStreaming(io, &buf);
 const out = &w.interface;
 try out.print("{d}\n", .{n});
 try out.flush();
 ```
+
+Use `writerStreaming` for stdout and stderr. `writer` writes at file
+positions, so when output is redirected to a file every process starts at
+offset 0 and overwrites what an earlier one wrote (`a; b > log` keeps only
+part of `b`'s output).
 
 Writing a file:
 
@@ -101,13 +106,13 @@ try fw.interface.flush();
 Known work, from the 0.17 release (October 2026):
 
 - `@cImport` is removed (deprecated in 0.16). Tesselix does not use it: the
-  simulator declares SDL3 by hand. The wlroots backend should do the same or
-  use the translate-c package.
+  simulator declares SDL3 by hand and txgl declares GL by hand. The Linux
+  backend should do the same for libdrm, GBM, EGL, libinput and libseat.
 - The build system splits configuration and execution into separate
   processes; check custom build steps.
 - `@bitCast` rules were revised; array multiplication (`**`) is removed in
   favor of `@splat`.
 - ZLS needs to catch up with the new build server protocol; check before
   switching while working in VS Code.
-- The Linux backend: zig-wlroots targets Zig 0.15 (wlroots 0.20). Either it
-  catches up, or Tesselix keeps a thin wlroots binding of its own.
+- No wlroots (Top-Level Design, "Foundation"), so no zig-wlroots to wait
+  for.

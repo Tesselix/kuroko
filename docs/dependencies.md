@@ -23,10 +23,13 @@ Tesselix uses the **latest solid** version of every tool and library.
 | SDL (simulator only) | 3.4.x, newest patch (3.4.18 when written) | 2026-01-01 | 2026-04-01 | — | — |
 | Inter font (atlases) | as shipped by the build machine; regenerate with `tools/fontgen` | | | | |
 
-Later, for the Linux backend: wlroots, wayland, wayland-protocols,
-libinput, xkbcommon, pixman. Their versions are chosen by the same rule when
-the backend is built. Known constraint: zig-wlroots targets Zig 0.15 and
-wlroots 0.20, so either it catches up or Tesselix keeps its own binding.
+GPU: OpenGL ES 3.0 (Linux) and OpenGL 3.3 core (macOS), from the system's
+driver (Mesa on Linux); loaded at run time, nothing to pin.
+
+Later, for Tesselix's own Linux backend (no wlroots, see the Top-Level
+Design, "Foundation"): libdrm, GBM and EGL (Mesa), libinput, libxkbcommon,
+libseat, wayland-protocols (XML, for the protocol definitions). Their
+versions are chosen by the same rule when the backend is built.
 
 ## How to check
 

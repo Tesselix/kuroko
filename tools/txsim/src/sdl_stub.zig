@@ -29,6 +29,13 @@ export fn SDL_CreateTexture() void {}
 export fn SDL_DestroyTexture() void {}
 export fn SDL_SetTextureScaleMode() void {}
 export fn SDL_UpdateTexture() void {}
+export fn SDL_GL_SetAttribute() void {}
+export fn SDL_GL_CreateContext() void {}
+export fn SDL_GL_DestroyContext() void {}
+export fn SDL_GL_MakeCurrent() void {}
+export fn SDL_GL_SetSwapInterval() void {}
+export fn SDL_GL_SwapWindow() void {}
+export fn SDL_GL_GetProcAddress() void {}
 export fn SDL_WaitEventTimeout() void {}
 export fn SDL_PollEvent() void {}
 export fn SDL_GetModState() void {}

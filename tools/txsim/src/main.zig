@@ -1,6 +1,6 @@
 //! txsim: the simulator backend. Runs the real compositor core in one SDL3
 //! window on macOS (or any desktop), so the compositor, desktop and widgets
-//! can be developed before the Linux VM and wlroots backend exist.
+//! can be developed before Tesselix's own Linux (DRM/KMS) backend exists.
 //!
 //! The backend stays thin: it only translates SDL events into Tesselix
 //! input events and shows the canvas the core draws. All behavior lives in
@@ -13,9 +13,14 @@
 //!   zig build run -- --tiled         all five apps open on the desktop
 //!   zig build run -- --dark          dark theme
 //!   zig build run -- --size 1280x800
+//!   zig build run -- --cpu           draw on the CPU (also TX_GPU=off);
+//!                                    the default is the GPU (txgl), with
+//!                                    the CPU as the fallback
 //!
 //! Development only: --snapshot FILE.ppm --script NAME renders a scripted
 //! sequence and writes the final frame (used to check the UI headless).
+//! Add --gpu to draw it on the GPU and read it back (to compare with the
+//! CPU's).
 
 const std = @import("std");
 const core = @import("txcore");
@@ -23,6 +28,8 @@ const tw = @import("txwidgets");
 const txcomp = @import("txcomp");
 const controls = @import("controls");
 const txwl = @import("txwl");
+const txgl = @import("txgl");
+const builtin = @import("builtin");
 const keycodes = @import("keycodes.zig");
 
 const c = @import("sdl.zig");
@@ -60,6 +67,11 @@ const Options = struct {
     /// The whole screen (the Ubuntu VM, with SDL's KMS/DRM driver).
     fullscreen: bool = false,
     script: []const u8 = "default",
+    /// Draw on the CPU instead of the GPU.
+    cpu: bool = false,
+    /// A scripted snapshot drawn on the GPU (read back), to compare with
+    /// the CPU one.
+    gpu_snapshot: bool = false,
 };
 
 fn parseArgs(args: []const [:0]const u8) !Options {
@@ -67,7 +79,7 @@ fn parseArgs(args: []const [:0]const u8) !Options {
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
-        if (std.mem.eql(u8, a, "--fullscreen")) o.fullscreen = true else if (std.mem.eql(u8, a, "--dark")) o.dark = true else if (std.mem.eql(u8, a, "--panel")) o.panel = true else if (std.mem.eql(u8, a, "--tiled")) o.tiled = true else if (std.mem.eql(u8, a, "--size") and i + 1 < args.len) {
+        if (std.mem.eql(u8, a, "--fullscreen")) o.fullscreen = true else if (std.mem.eql(u8, a, "--cpu")) o.cpu = true else if (std.mem.eql(u8, a, "--gpu")) o.gpu_snapshot = true else if (std.mem.eql(u8, a, "--dark")) o.dark = true else if (std.mem.eql(u8, a, "--panel")) o.panel = true else if (std.mem.eql(u8, a, "--tiled")) o.tiled = true else if (std.mem.eql(u8, a, "--size") and i + 1 < args.len) {
             i += 1;
             var it = std.mem.splitScalar(u8, args[i], 'x');
             o.w = try std.fmt.parseInt(i32, it.next() orelse "1440", 10);
@@ -182,7 +194,8 @@ const Screen = struct {
     lh: i32 = 0,
     scale: i32 = 1,
 
-    fn update(self: *Screen, gpa: std.mem.Allocator, window: *c.Window, renderer: *c.Renderer) !bool {
+    /// `renderer` is null on the GPU path: no texture and no pixel buffer.
+    fn update(self: *Screen, gpa: std.mem.Allocator, window: *c.Window, renderer: ?*c.Renderer) !bool {
         var lw: c_int = 0;
         var lh: c_int = 0;
         var pw: c_int = 0;
@@ -197,8 +210,9 @@ const Screen = struct {
         self.pw = lw * scale;
         self.ph = lh * scale;
         self.scale = scale;
+        const r = renderer orelse return true;
         if (self.texture) |t| c.SDL_DestroyTexture(t);
-        const tex = c.SDL_CreateTexture(renderer, c.PIXELFORMAT_ARGB8888, c.TEXTUREACCESS_STREAMING, self.pw, self.ph) orelse return error.Texture;
+        const tex = c.SDL_CreateTexture(r, c.PIXELFORMAT_ARGB8888, c.TEXTUREACCESS_STREAMING, self.pw, self.ph) orelse return error.Texture;
         // The canvas is already at physical size; never smooth it.
         _ = c.SDL_SetTextureScaleMode(tex, c.SCALEMODE_NEAREST);
         self.texture = tex;
@@ -206,6 +220,26 @@ const Screen = struct {
         return true;
     }
 };
+
+/// Context attributes before the window exists: OpenGL 3.3 core on macOS
+/// (forward-compatible, as macOS requires), OpenGL ES 3.0 elsewhere.
+fn setGlAttributes(api: txgl.Api) void {
+    _ = c.SDL_GL_SetAttribute(c.GL_DOUBLEBUFFER, 1);
+    _ = c.SDL_GL_SetAttribute(c.GL_DEPTH_SIZE, 0);
+    switch (api) {
+        .gl33 => {
+            _ = c.SDL_GL_SetAttribute(c.GL_CONTEXT_PROFILE_MASK, c.GL_CONTEXT_PROFILE_CORE);
+            _ = c.SDL_GL_SetAttribute(c.GL_CONTEXT_FLAGS, c.GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+            _ = c.SDL_GL_SetAttribute(c.GL_CONTEXT_MAJOR_VERSION, 3);
+            _ = c.SDL_GL_SetAttribute(c.GL_CONTEXT_MINOR_VERSION, 3);
+        },
+        .gles30 => {
+            _ = c.SDL_GL_SetAttribute(c.GL_CONTEXT_PROFILE_MASK, c.GL_CONTEXT_PROFILE_ES);
+            _ = c.SDL_GL_SetAttribute(c.GL_CONTEXT_MAJOR_VERSION, 3);
+            _ = c.SDL_GL_SetAttribute(c.GL_CONTEXT_MINOR_VERSION, 0);
+        },
+    }
+}
 
 fn sdlFailed(what: []const u8, count: *u32) void {
     count.* += 1;
@@ -259,7 +293,7 @@ const Adopt = struct {
 
     fn newWindow(ctx: *anyopaque, s: tw.Surface, info: txwl.WindowInfo) void {
         const self: *Adopt = @ptrCast(@alignCast(ctx));
-        self.comp.adoptWindow(s, info.exe, self.clock.now());
+        self.comp.adoptWindow(s, .{ .pid = info.pid, .exe = info.exe }, self.clock.now());
     }
 };
 
@@ -494,23 +528,57 @@ pub fn main(init: std.process.Init) !void {
             win_h = @min(win_h, usable.h - 40);
         }
     }
-    const window = c.SDL_CreateWindow("Tesselix (simulator)", win_w, win_h, c.WINDOW_RESIZABLE | c.WINDOW_HIGH_PIXEL_DENSITY | (if (opts.fullscreen) c.WINDOW_FULLSCREEN else 0)) orelse {
+    // The GPU path: an OpenGL context on the window, drawn by txgl. Scripted
+    // snapshots read pixels, so they stay on the CPU.
+    const env_cpu = if (std.c.getenv("TX_GPU")) |v| std.mem.eql(u8, std.mem.span(v), "off") else false;
+    var use_gpu = !opts.cpu and !env_cpu and (opts.snapshot == null or opts.gpu_snapshot);
+    const api: txgl.Api = if (builtin.os.tag == .macos) .gl33 else .gles30;
+    if (use_gpu) setGlAttributes(api);
+    const window = c.SDL_CreateWindow("Tesselix (simulator)", win_w, win_h, c.WINDOW_RESIZABLE | c.WINDOW_HIGH_PIXEL_DENSITY | (if (opts.fullscreen) c.WINDOW_FULLSCREEN else 0) | (if (use_gpu) c.WINDOW_OPENGL else 0)) orelse {
         std.log.err("SDL_CreateWindow: {s}", .{c.SDL_GetError()});
         return error.Sdl;
     };
     defer c.SDL_DestroyWindow(window);
-    const renderer = c.SDL_CreateRenderer(window, null) orelse {
+
+    var gl_ctx: ?*c.GLContext = null;
+    var gpu: ?*txgl.Renderer = null;
+    if (use_gpu) gpu_setup: {
+        gl_ctx = c.SDL_GL_CreateContext(window) orelse {
+            std.log.warn("no OpenGL context ({s}); drawing on the CPU", .{c.SDL_GetError()});
+            break :gpu_setup;
+        };
+        _ = c.SDL_GL_MakeCurrent(window, gl_ctx);
+        if (!c.SDL_GL_SetSwapInterval(1)) std.log.warn("SDL_GL_SetSwapInterval: {s}", .{c.SDL_GetError()});
+        gpu = txgl.Renderer.create(gpa, &c.SDL_GL_GetProcAddress, api) catch |err| {
+            std.log.warn("GPU renderer failed ({s}); drawing on the CPU", .{@errorName(err)});
+            _ = c.SDL_GL_DestroyContext(gl_ctx.?);
+            gl_ctx = null;
+            break :gpu_setup;
+        };
+    }
+    use_gpu = gpu != null;
+    defer if (gl_ctx) |ctx| {
+        gpu.?.destroy();
+        _ = c.SDL_GL_DestroyContext(ctx);
+    };
+
+    const renderer: ?*c.Renderer = if (use_gpu) null else c.SDL_CreateRenderer(window, null) orelse {
         std.log.err("SDL_CreateRenderer: {s}", .{c.SDL_GetError()});
         return error.Sdl;
     };
-    defer c.SDL_DestroyRenderer(renderer);
-    if (!c.SDL_SetRenderVSync(renderer, 1)) std.log.warn("SDL_SetRenderVSync: {s}", .{c.SDL_GetError()});
+    defer if (renderer) |r| c.SDL_DestroyRenderer(r);
+    if (renderer) |r| {
+        if (!c.SDL_SetRenderVSync(r, 1)) std.log.warn("SDL_SetRenderVSync: {s}", .{c.SDL_GetError()});
+    }
+    var list = tw.DrawList.init(gpa);
+    defer list.deinit();
 
     var screen: Screen = .{};
     defer gpa.free(screen.pixels);
     _ = try screen.update(gpa, window, renderer);
     std.log.info("SDL video driver {s}, renderer {s}, window {d}x{d} (pixels {d}x{d}, scale {d})", .{
-        c.SDL_GetCurrentVideoDriver() orelse "?", c.SDL_GetRendererName(renderer) orelse "?",
+        c.SDL_GetCurrentVideoDriver() orelse "?",
+        if (renderer) |r| c.SDL_GetRendererName(r) orelse "?" else "txgl (" ++ "GPU" ++ ")",
         screen.lw, screen.lh, screen.pw, screen.ph, screen.scale,
     });
     // Render calls that fail are reported (a few times), not ignored: on a
@@ -577,6 +645,9 @@ pub fn main(init: std.process.Init) !void {
     var interval_hist: core.metrics.Histogram = .{};
     var last_present: i64 = -1;
     var pending_input: ?i64 = null;
+    // GPU uploads (window pictures and glyphs), for the summary.
+    var upload_bytes: u64 = 0;
+    var uploads: u64 = 0;
 
     const sc = script(opts.script);
     var step_i: usize = 0;
@@ -628,20 +699,35 @@ pub fn main(init: std.process.Init) !void {
 
         if (need) {
             const t0 = clock.now();
-            var cv = tw.Canvas.init(screen.pixels, screen.pw, screen.ph, screen.pw, screen.scale);
-            comp.render(&cv, now);
-            if (!c.SDL_UpdateTexture(screen.texture.?, null, screen.pixels.ptr, screen.pw * 4)) sdlFailed("SDL_UpdateTexture", &sdl_errors);
-            if (!c.SDL_RenderClear(renderer)) sdlFailed("SDL_RenderClear", &sdl_errors);
-            if (!c.SDL_RenderTexture(renderer, screen.texture.?, null, null)) sdlFailed("SDL_RenderTexture", &sdl_errors);
+            var ok = false;
+            if (gpu) |g| {
+                list.reset();
+                var rec = tw.Canvas.recorder(&list, screen.pw, screen.ph, screen.scale);
+                comp.render(&rec, now);
+                g.draw(&list, screen.pw, screen.ph);
+                uploads += g.stats.uploads;
+                upload_bytes += g.stats.upload_bytes;
+            } else if (renderer) |r| {
+                var cv = tw.Canvas.init(screen.pixels, screen.pw, screen.ph, screen.pw, screen.scale);
+                comp.render(&cv, now);
+                if (!c.SDL_UpdateTexture(screen.texture.?, null, screen.pixels.ptr, screen.pw * 4)) sdlFailed("SDL_UpdateTexture", &sdl_errors);
+                if (!c.SDL_RenderClear(r)) sdlFailed("SDL_RenderClear", &sdl_errors);
+                if (!c.SDL_RenderTexture(r, screen.texture.?, null, null)) sdlFailed("SDL_RenderTexture", &sdl_errors);
+            }
             const t1 = clock.now();
-            if (c.SDL_RenderPresent(renderer)) {
+            if (gpu != null) {
+                ok = c.SDL_GL_SwapWindow(window);
+            } else if (renderer) |r| {
+                ok = c.SDL_RenderPresent(r);
+            }
+            if (ok) {
                 presented += 1;
                 const tp = clock.now();
                 if (last_present >= 0 and tp - last_present <= txcomp.FramePace.idle_gap) interval_hist.record(tp - last_present);
                 last_present = tp;
                 if (presented == 1) std.log.info("first frame presented", .{});
                 if (wl) |w| w.presented(@truncate(@as(u64, @intCast(tp)) / ms));
-            } else sdlFailed("SDL_RenderPresent", &sdl_errors);
+            } else sdlFailed("present", &sdl_errors);
             frame_hist.record(t1 - t0);
             if (pending_input) |t| latency_hist.record(clock.now() - t);
             pending_input = null;
@@ -653,8 +739,17 @@ pub fn main(init: std.process.Init) !void {
 
         if (opts.snapshot) |path| {
             if (now >= sc.end * ms) {
-                var cv = tw.Canvas.init(screen.pixels, screen.pw, screen.ph, screen.pw, screen.scale);
-                comp.render(&cv, now);
+                if (gpu) |g| {
+                    list.reset();
+                    var rec = tw.Canvas.recorder(&list, screen.pw, screen.ph, screen.scale);
+                    comp.render(&rec, now);
+                    g.draw(&list, screen.pw, screen.ph);
+                    screen.pixels = try gpa.realloc(screen.pixels, @intCast(screen.pw * screen.ph));
+                    g.readPixels(screen.pixels, screen.pw, screen.ph);
+                } else {
+                    var cv = tw.Canvas.init(screen.pixels, screen.pw, screen.ph, screen.pw, screen.scale);
+                    comp.render(&cv, now);
+                }
                 try writePpm(io, path, &screen);
                 running = false;
             }
@@ -665,6 +760,7 @@ pub fn main(init: std.process.Init) !void {
     frame_hist.print("frame build (core render + upload)");
     interval_hist.print("frame interval (while drawing)");
     latency_hist.print("input to present");
+    if (gpu != null) std.debug.print("GPU uploads: {d}, {d} MB\n", .{ uploads, upload_bytes / (1024 * 1024) });
     // Stopped by a signal: leave now. Tearing down SDL inside a Wayland
     // kiosk (cage) can hang, and the OS frees everything anyway.
     if (quit_signal.load(.monotonic)) std.process.exit(0);

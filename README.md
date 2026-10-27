@@ -14,6 +14,7 @@ The design is in [`docs/`](docs/README.md). Start with the Top-Level Design.
 | `txwidgets/` | Widget library (Mode A): canvas rasterizer, fonts, widget tree and layout, buttons, toggles, checkboxes, progress, text fields, the document view with the scrolling behavior |
 | `txcomp/` | Compositor core: window model, attention tiling, chrome, top bar, launcher, shelf, event publisher. Backend-independent |
 | `txwl/` | Tesselix as a Wayland server: the wire format, the core and xdg-shell protocols in pure Zig. Apps' windows become compositor windows like Tesselix's own |
+| `txgl/` | The GPU renderer: draws the compositor's recorded frames with OpenGL ES 3.0 (OpenGL 3.3 on the Mac). Shared by every backend |
 | `txdesk/` | Desktop services. Now: a stub context hub that prints the scene graph as text |
 | `txdk/` | SDK for other languages (C ABI, Mode B UI host, bindings). Not started |
 | `apps/controls/` | The controls app: every widget's behavior in one place, growing with the library |
@@ -23,7 +24,7 @@ The design is in [`docs/`](docs/README.md). Start with the Top-Level Design.
 ## Running on the Mac
 
 The compositor core, desktop and widgets run on macOS through the simulator.
-Only the Linux backend (wlroots) needs the VM.
+Only the Linux backend (DRM/KMS) needs the VM.
 
 1. Install SDL3 and pkg-config: `brew install sdl3 pkg-config`
 2. Install **Zig 0.16.0** (pinned, see `build.zig.zon`): `brew install zig`,
@@ -37,6 +38,7 @@ zig build run           # the simulator: a clean desktop, nothing started; the a
 zig build run -- --panel   # Controls, Scroll Lab and Notes wait in the panel
 zig build run -- --tiled   # all five apps open on the desktop
 zig build run -- --dark    # dark theme
+zig build run -- --cpu     # draw on the CPU instead of the GPU (also TX_GPU=off)
 zig build run-desk      # in a second terminal: the desktop service prints the scene
 ```
 
@@ -123,6 +125,10 @@ their Wayland server (`wayland-tesselix-0` in the runtime directory), so
 the compositor gives each window its size and place. Any Wayland app can
 be pointed at it by hand: `WAYLAND_DISPLAY=wayland-tesselix-0 app`. By hand:
 `~/.cache/tesselix/bin/txdesk apps list` (or `apps scan --verbose`).
+Trust: any installed app is trusted; other apps, files and folders are
+marked by hand with `txdesk trust app|file|folder <path> trusted|untrusted|clear`
+(`txdesk trust list`, `txdesk trust check <path>`). The desktop service's
+log shows each window's app, PID, signature and trust.
 The desktop service's log is `~/.cache/tesselix/txdesk.log`; the
 simulator's is `txsim.log`. Start `run.sh`
 from the VM's console, logged in as yourself: cage needs the console's seat.
@@ -138,7 +144,8 @@ VM's own `libSDL3.so.0` is used at run time.
 
 ## Linux (later)
 
-The compositor's Linux backend uses wlroots. The `zig-wlroots` bindings
-currently target Zig 0.15 and wlroots 0.20, so when the backend is built they
-either support our Zig version or Tesselix keeps a thin binding of its own. It runs in a Linux VM (UTM on the
-Mac); see the Top-Level Design, "Development environment".
+Tesselix's own Linux backend (no wlroots; see the Top-Level Design,
+"Foundation") drives the screen with libdrm/GBM/EGL and input with
+libinput and libseat, and draws with the same GPU renderer (`txgl`). It
+runs in a Linux VM (UTM on the Mac); see the Top-Level Design,
+"Development environment".

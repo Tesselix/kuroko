@@ -161,6 +161,15 @@ Repairs are logged with their source (socket peer, or file and offset) and count
 - **Test with Zig's debug allocator** (leaks, double free, use-after-free) and **fuzz** the Wayland protocol handlers and the Tesselix decoder, since both parse untrusted input.
 - Precedent: River is a Wayland compositor written in Zig on wlroots, using the `zig-wayland` and `zig-wlroots` bindings.
 
+### Foundation: our own compositor, no wlroots (agreed, 2026-10-27)
+
+Tesselix needs full control of every part of the window system, so that an advanced window manager, the debugger (`docs/debugging.md`) and the trust and sensitivity features (`docs/user-signals.md`) can be built without working around someone else's object model.
+
+- **Own Wayland server:** `txwl`, pure Zig, no libwayland.
+- **Own GPU renderer:** `txgl`, OpenGL ES 3.0 (OpenGL 3.3 core on the Mac). The compositor core records a draw list; the renderer turns it into quads.
+- **Own Linux backend, on the system libraries** that every compositor uses: libdrm (KMS), GBM, EGL, libinput, libxkbcommon, libseat. No wlroots.
+- **What this costs:** the hardware edge cases wlroots solves (atomic modesetting, buffer formats and modifiers, multiple GPUs, hotplug, explicit sync) are ours to solve. They are built step by step, behind a thin backend interface, and tested on the VM and on bare metal.
+
 ### Where the risk is
 
 - A compositor is a single-threaded event loop. Pointers used and dropped inside one call are safe.
@@ -423,6 +432,9 @@ The app icon opens a menu for everything the window and the system own; the menu
 | App | New window · Restart · Restart as root · Quit (all windows) |
 | System | Resource use · Permissions · Force quit (only when not responding) |
 | Assistant | Pin to favorites · Add to a working set · Don't learn from this app · Forget this app's history |
+| Security (agreed: the group; suggestion: the items) | Trust of this app · Trust of this document · Mark as sensitive · Security settings… |
+
+- (agreed) **Security** is where trust and sensitivity are managed in detail: the trust level of the app and of the object open in the window, raised trusts (from paste warnings) and taking them back, and sensitive marks. See `docs/user-signals.md`.
 
 - No double-click-to-close on the icon.
 - Force quit is user-initiated and asks for confirmation.
@@ -639,10 +651,10 @@ Until then Tesselix is started nested from an existing desktop, from a TTY, or a
 
 ### Development environment
 
-- **macOS for the platform-independent parts.** Zig runs natively on the Mac, but a Wayland compositor does not: it needs Linux kernel interfaces (DRM/KMS, libinput, dmabuf), and wlroots is Linux-only.
+- **macOS for the platform-independent parts.** Zig runs natively on the Mac, but a Wayland compositor does not: it needs Linux kernel interfaces (DRM/KMS, libinput, dmabuf).
 - **A Linux VM on the Mac for the compositor** (agreed). The compositor runs **nested**, as a window inside the VM's own Wayland session, so it can crash and restart without losing the desktop. (suggestion) UTM for a full desktop VM, or Lima for a light command-line one.
-- (suggestion) **Fedora or Arch in the VM rather than Ubuntu.** Tesselix uses the latest libraries and Wayland protocols, and Ubuntu lags on wlroots and wayland-protocols. On Ubuntu, build wlroots from source, pinned to the version the `zig-wlroots` binding expects.
-- (suggestion) **wlroots' headless backend for automated tests,** so compositor tests run in the VM with no screen.
+- (suggestion) **Fedora or Arch in the VM rather than Ubuntu.** Tesselix uses the latest libraries and Wayland protocols, and Ubuntu lags on wayland-protocols.
+- (suggestion) **A headless backend for automated tests** (no screen, frames read back), so compositor tests run in the VM.
 - **Bare-metal Linux later** (agreed), for what a VM can't show truthfully: direct DRM/KMS, real GPU buffers and fences, monitor hotplug, multiple physical screens, high refresh rates and fast mice.
 
 ### Performance in the VM (agreed)
@@ -653,7 +665,7 @@ Until then Tesselix is started nested from an existing desktop, from a TTY, or a
 
 ### Code split for the Mac (suggestion)
 
-Keep the Wayland and wlroots layer thin, and put the logic in pure Zig that builds and tests on any OS:
+Keep the backend layer (DRM/KMS, input, the GL context) thin, and put the logic in pure Zig that builds and tests on any OS:
 
 - The Tesselix binary format: comptime validation, byte-swap and repair.
 - The object registry: handles, guards, generations, tested with the debug allocator.
@@ -690,7 +702,7 @@ Steps 1–5 fit entirely on the Mac and the VM.
 - [ ] Is anything permanently visible at the bottom of the screen as a hint for the summoned dock?
 - [ ] Greeter counts while the user is logged out: a snapshot from logout only, or kept current by an opt-in service that never touches the encrypted memory?
 - [ ] Which summary categories are shown by default on the lock screen and the greeter.
-- [ ] Foundation: wlroots through `zig-wlroots` (as River does), or a compositor core written from scratch?
+- [x] Foundation: our own compositor, no wlroots (see "Foundation", 2026-10-27).
 - [ ] Message transport: one hub, or the compositor publishing directly to each subscriber?
 - [ ] Tesselix type ID registry: a single 16-bit space, or split by component?
 - [ ] Schema language for Tesselix structures and code generation.
