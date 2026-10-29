@@ -1,5 +1,5 @@
 //! A Wayland app's top-level window, as the compositor sees it: the same
-//! window contract as Tesselix's own apps (txwidgets Surface).
+//! window contract as Kuroko's own apps (txwidgets Surface).
 //!
 //! - configure: the compositor gives the size; the app is told
 //!   (xdg_toplevel.configure with its state: focused, maximized, full

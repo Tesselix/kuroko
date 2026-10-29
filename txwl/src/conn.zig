@@ -58,7 +58,7 @@ pub const Conn = struct {
             msg.iovlen = 1;
             msg.control = &control;
             msg.controllen = @intCast(control.len);
-            // Received fds are not inherited by programs Tesselix starts.
+            // Received fds are not inherited by programs Kuroko starts.
             const flags: u32 = if (is_linux) 0x40000000 else 0; // MSG_CMSG_CLOEXEC
             const n = c.recvmsg(self.fd, &msg, flags);
             if (n < 0) {

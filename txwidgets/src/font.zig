@@ -1,4 +1,4 @@
-//! Pre-rendered font atlases (Inter, OFL-1.1) stored as Tesselix records.
+//! Pre-rendered font atlases (Inter, OFL-1.1) stored as Kuroko records.
 //!
 //! Stopgap until the text stack is chosen (Widget Framework, open question).
 //! Each UI atlas has a Hebrew fallback atlas (Noto Sans Hebrew, OFL-1.1) for
@@ -34,28 +34,28 @@ const pixel_sizes = [_]u16{ 11, 13, 15, 20, 22, 26, 30, 40 };
 
 const files = struct {
     const regular = [_][]const u8{
-        @embedFile("fonts/regular-11.tslx"), @embedFile("fonts/regular-13.tslx"),
-        @embedFile("fonts/regular-15.tslx"), @embedFile("fonts/regular-20.tslx"),
-        @embedFile("fonts/regular-22.tslx"), @embedFile("fonts/regular-26.tslx"),
-        @embedFile("fonts/regular-30.tslx"), @embedFile("fonts/regular-40.tslx"),
+        @embedFile("fonts/regular-11.krkde"), @embedFile("fonts/regular-13.krkde"),
+        @embedFile("fonts/regular-15.krkde"), @embedFile("fonts/regular-20.krkde"),
+        @embedFile("fonts/regular-22.krkde"), @embedFile("fonts/regular-26.krkde"),
+        @embedFile("fonts/regular-30.krkde"), @embedFile("fonts/regular-40.krkde"),
     };
     const semibold = [_][]const u8{
-        @embedFile("fonts/semibold-11.tslx"), @embedFile("fonts/semibold-13.tslx"),
-        @embedFile("fonts/semibold-15.tslx"), @embedFile("fonts/semibold-20.tslx"),
-        @embedFile("fonts/semibold-22.tslx"), @embedFile("fonts/semibold-26.tslx"),
-        @embedFile("fonts/semibold-30.tslx"), @embedFile("fonts/semibold-40.tslx"),
+        @embedFile("fonts/semibold-11.krkde"), @embedFile("fonts/semibold-13.krkde"),
+        @embedFile("fonts/semibold-15.krkde"), @embedFile("fonts/semibold-20.krkde"),
+        @embedFile("fonts/semibold-22.krkde"), @embedFile("fonts/semibold-26.krkde"),
+        @embedFile("fonts/semibold-30.krkde"), @embedFile("fonts/semibold-40.krkde"),
     };
     const hebrew_regular = [_][]const u8{
-        @embedFile("fonts/hebrew-regular-11.tslx"), @embedFile("fonts/hebrew-regular-13.tslx"),
-        @embedFile("fonts/hebrew-regular-15.tslx"), @embedFile("fonts/hebrew-regular-20.tslx"),
-        @embedFile("fonts/hebrew-regular-22.tslx"), @embedFile("fonts/hebrew-regular-26.tslx"),
-        @embedFile("fonts/hebrew-regular-30.tslx"), @embedFile("fonts/hebrew-regular-40.tslx"),
+        @embedFile("fonts/hebrew-regular-11.krkde"), @embedFile("fonts/hebrew-regular-13.krkde"),
+        @embedFile("fonts/hebrew-regular-15.krkde"), @embedFile("fonts/hebrew-regular-20.krkde"),
+        @embedFile("fonts/hebrew-regular-22.krkde"), @embedFile("fonts/hebrew-regular-26.krkde"),
+        @embedFile("fonts/hebrew-regular-30.krkde"), @embedFile("fonts/hebrew-regular-40.krkde"),
     };
     const hebrew_semibold = [_][]const u8{
-        @embedFile("fonts/hebrew-semibold-11.tslx"), @embedFile("fonts/hebrew-semibold-13.tslx"),
-        @embedFile("fonts/hebrew-semibold-15.tslx"), @embedFile("fonts/hebrew-semibold-20.tslx"),
-        @embedFile("fonts/hebrew-semibold-22.tslx"), @embedFile("fonts/hebrew-semibold-26.tslx"),
-        @embedFile("fonts/hebrew-semibold-30.tslx"), @embedFile("fonts/hebrew-semibold-40.tslx"),
+        @embedFile("fonts/hebrew-semibold-11.krkde"), @embedFile("fonts/hebrew-semibold-13.krkde"),
+        @embedFile("fonts/hebrew-semibold-15.krkde"), @embedFile("fonts/hebrew-semibold-20.krkde"),
+        @embedFile("fonts/hebrew-semibold-22.krkde"), @embedFile("fonts/hebrew-semibold-26.krkde"),
+        @embedFile("fonts/hebrew-semibold-30.krkde"), @embedFile("fonts/hebrew-semibold-40.krkde"),
     };
 };
 
@@ -254,7 +254,7 @@ test "atlases load and measure" {
     const f = Fonts.get();
     const a = f.atlas(.{ .size = .body }, 1);
     try std.testing.expectEqual(@as(u16, 13), a.pixel_size);
-    try std.testing.expect(a.measure("Tesselix") > 30);
+    try std.testing.expect(a.measure("Kuroko") > 30);
     const a2 = f.atlas(.{ .size = .body }, 2);
     try std.testing.expectEqual(@as(u16, 26), a2.pixel_size);
     try std.testing.expect(a.glyph(0x2026).w > 0); // ellipsis present

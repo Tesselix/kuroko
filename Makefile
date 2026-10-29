@@ -3,7 +3,7 @@
 #
 #   make test            all unit tests (on the Mac)
 #   make run             the simulator on the Mac
-#   make ubuntu          build for the Ubuntu ARM VM into ubuntu-share/tesselix
+#   make ubuntu          build for the Ubuntu ARM VM into ubuntu-share/kuroko
 #   make ubuntu OPTIMIZE=Debug    the same, as a Debug build
 #   make vm              print the commands to run on the VM
 #   make clean-ubuntu    remove the VM build from ubuntu-share
@@ -11,15 +11,15 @@
 # ubuntu-share/ is the UTM shared folder; the VM mounts it (read-only) at
 # VM_SHARE. On the VM:
 #
-#   sh /mnt/shared/tesselix/check.sh     before the first run: is the VM ready?
-#   sh /mnt/shared/tesselix/setup.sh     once: libSDL3, Mesa, groups
-#   sh /mnt/shared/tesselix/run.sh       Tesselix full screen on the VM's screen
+#   sh /mnt/shared/kuroko/check.sh     before the first run: is the VM ready?
+#   sh /mnt/shared/kuroko/setup.sh     once: libSDL3, Mesa, groups
+#   sh /mnt/shared/kuroko/run.sh       Kuroko full screen on the VM's screen
 
 SHARE    ?= ubuntu-share
 VM_SHARE ?= /mnt/shared
 TARGET   ?= aarch64-linux-gnu
 OPTIMIZE ?= ReleaseSafe
-OUT      := $(SHARE)/tesselix
+OUT      := $(SHARE)/kuroko
 
 .PHONY: all test run ubuntu vm clean-ubuntu
 
@@ -36,9 +36,9 @@ ubuntu:
 
 vm:
 	@echo "On the VM (shared folder at $(VM_SHARE)):"
-	@echo "  sh $(VM_SHARE)/tesselix/check.sh"
-	@echo "  sh $(VM_SHARE)/tesselix/setup.sh     (once)"
-	@echo "  sh $(VM_SHARE)/tesselix/run.sh"
+	@echo "  sh $(VM_SHARE)/kuroko/check.sh"
+	@echo "  sh $(VM_SHARE)/kuroko/setup.sh     (once)"
+	@echo "  sh $(VM_SHARE)/kuroko/run.sh"
 
 clean-ubuntu:
 	rm -rf $(OUT)

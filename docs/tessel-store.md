@@ -1,10 +1,10 @@
-# Tesselix — Tessel Store and App Trust
+# Kuroko — Tessel Store and App Trust
 
 Oct 14, 2026 · @feral keep
 
 ## Purpose and notation
 
-This document records how Tesselix knows that an application is allowed to receive sensitive data or powers from the system, and how that trust is distributed through the Tessel Store. It is preliminary: the authorization mechanism is needed from the start, the store comes later.
+This document records how Kuroko knows that an application is allowed to receive sensitive data or powers from the system, and how that trust is distributed through the Tessel Store. It is preliminary: the authorization mechanism is needed from the start, the store comes later.
 
 It builds on the Top-Level Design and the Widget Framework. Where they differ, the Top-Level Design wins. Notation: **(agreed)**, **(suggestion)**.
 
@@ -18,7 +18,7 @@ It builds on the Top-Level Design and the Widget Framework. Where they differ, t
 
 ## Authorization: is this process allowed? (agreed)
 
-Every Tesselix service that hands out sensitive data or powers (compositor, data service, memory, recorder, gateway) applies the same check. It lives in one shared library so every service checks the same way.
+Every Kuroko service that hands out sensitive data or powers (compositor, data service, memory, recorder, gateway) applies the same check. It lives in one shared library so every service checks the same way.
 
 ### On connect
 
@@ -51,14 +51,14 @@ Code injected into a valid, running internal app passes every check, since it ru
 | Stage | Trust comes from | Who can change it |
 | --- | --- | --- |
 | Development | Local trust store: developer keys and binary digests | The developer, through a polkit-gated tool |
-| Store | Signed manifest from the Tessel Store, verified with the store's public key built into Tesselix | Only the store |
+| Store | Signed manifest from the Tessel Store, verified with the store's public key built into Kuroko | Only the store |
 | Hardened (optional) | Verified boot and a dm-verity system partition | Nobody on the machine |
 
 Development and store sources can be active together, so developers test local builds alongside store apps.
 
 ### Local trust store (development)
 
-- **Root-owned and read-only for the user** (for example `/etc/tesselix/trust/`). The kernel refuses writes from the user's processes; changes go through a polkit-gated tool (`tesselix-trust add`, `revoke`) that asks for the admin password.
+- **Root-owned and read-only for the user** (for example `/etc/kuroko/trust/`). The kernel refuses writes from the user's processes; changes go through a polkit-gated tool (`kuroko-trust add`, `revoke`) that asks for the admin password.
 - **Not encrypted:** encryption hides content but doesn't stop changes. File permissions do.
 - (suggestion) **Signing builds:** a dev key whose public half is in the trust store, and a `zig build` step that signs each binary, so rebuilds need no re-registration.
 
@@ -71,7 +71,7 @@ The Tessel Store publishes a manifest, signed with the store's private key, whic
 - **A version number,** so an older signed manifest can't be put back to re-trust a flawed version (rollback protection).
 - **A revocation list** for apps, versions or keys no longer trusted.
 
-The client verifies the signature with the public key built into Tesselix before using it. Who can write the local copy no longer matters: a changed manifest fails verification.
+The client verifies the signature with the public key built into Kuroko before using it. Who can write the local copy no longer matters: a changed manifest fails verification.
 
 ### Kernel mechanisms
 
@@ -91,7 +91,7 @@ Each app's entry in the trust sources lists what it may request. Examples:
 | Compositor: input capture | Pick mode, capturing clicks on other windows |
 | Gateway | Network access through the gateway |
 
-- **Core Tesselix apps** get what they need; only they get compositor powers.
+- **Core Kuroko apps** get what they need; only they get compositor powers.
 - **Store apps** get only the capabilities listed for them in the signed manifest.
 - **Unverified apps** get reference data only, and normal windows.
 
@@ -114,7 +114,7 @@ An unsandboxed app can read much of the system directly (`/sys`, `/proc`, D-Bus)
 ## Open questions
 
 - [ ] Separate system user for the recorder and memory services: confirm.
-- [ ] Sandboxing for third-party Tesselix apps: required or recommended?
+- [ ] Sandboxing for third-party Kuroko apps: required or recommended?
 - [ ] Signature format: detached `.sig` files or an ELF section.
 - [ ] Capability list: final names and granularity.
 - [ ] Store: hosting, developer accounts, review process, update cadence of the manifest.

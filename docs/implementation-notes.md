@@ -22,11 +22,12 @@ touches. Change the code and this file together.
 | Exact theme colors (Look and Controls) | First values in `txcore/src/theme.zig`, light and dark | |
 | Text stack and 2D rendering (Widget Framework) | Stopgap: own CPU rasterizer and pre-rendered Inter atlases; no shaping, no bidi, no Hebrew yet. The compositor's frame goes to the GPU as a draw list (see "GPU rendering") | `txwidgets/src/canvas.zig`, `font.zig`, `draw_list.zig` |
 | Quick drag out of the panel (Top-Level) | Released within 0.3 s of the press; `quick_drag_ms` | `txcomp/src/compositor.zig` |
+| Reorder preview (Top-Level, Swapping) | The pointer rests 0.12 s on a tile before its window moves aside (`reorder_dwell_ms`); a drop before that still swaps. The target is found in the tiles as they were when the drag began, so a swap that moves the borders cannot flip it back and forth | `txcomp/src/compositor.zig` |
 | Where a restored window goes after maximize (Top-Level) | The old tile order; the maximized window keeps its place, or goes last if it came from the panel | `txcomp/src/compositor.zig` |
 | How app and object trust combine (User Signals) | An unknown object leaves the app's level; otherwise the lower of the two | `txcore/src/trust.zig` |
-| Which apps are trusted (User Signals) | Tesselix's own apps always; an installed app (in the registry) unless the user marks it; any other app only when marked | `txcore/src/trust.zig`, `txcomp/src/compositor.zig` |
+| Which apps are trusted (User Signals) | Kuroko's own apps always; an installed app (in the registry) unless the user marks it; any other app only when marked | `txcore/src/trust.zig`, `txcomp/src/compositor.zig` |
 | A mark on a folder (User Signals) | Covers every file under it; the nearest marked folder wins, and a file's own mark wins over any folder | `txcore/src/trust.zig` |
-| Who decides Focus and Recent (User Signals, Top-Level "Influence files") | txdesk: its recorder writes the facts (`facts.tslx`), its simple predictor the lists (`focus.tslx`); the compositor only reads them | `txdesk/src/focus.zig` |
+| Who decides Focus and Recent (User Signals, Top-Level "Influence files") | txdesk: its recorder writes the facts (`facts.krkde`), its simple predictor the lists (`focus.krkde`); the compositor only reads them | `txdesk/src/focus.zig` |
 | What earns Focus, for now | Keyboard-focus time, halving every 3 days, at least 2 minutes' worth; or a cycle that is due (opened in the first hour of the day on ≥ 3 days and on more than half of the last 14 days with use), during today's first hour | `txdesk/src/focus.zig` |
 | Footprints (Look and Controls) | A section counts as read after 3 s at the middle of the view while not scrolling; in memory only | `txwidgets/src/doc_view.zig` |
 
@@ -51,7 +52,7 @@ touches. Change the code and this file together.
 ## Simulator (macOS)
 
 - Apps run in-process and implement `txwidgets.Surface`, the subset of what
-  Wayland plus the Tesselix protocol will carry.
+  Wayland plus the Kuroko protocol will carry.
 - Wheel versus touchpad is guessed from fractional deltas; macOS reports no
   device type. Final tuning of the bands happens on Linux with libinput.
 - Cmd is Super. Shortcuts avoid Cmd+W, Cmd+Q and Cmd+M, which the SDL window
@@ -103,8 +104,8 @@ touches. Change the code and this file together.
   compositor keeps both per window and publishes them before the window's
   `opened` record (`SceneIdentity`, with the window's trust and the app's
   part of it), and again when the trust changes.
-- **Marks.** txdesk keeps the user's marks in `trust.tslx` next to
-  `apps.tslx` (`TrustMark`: app, file or folder; trusted or untrusted; the
+- **Marks.** txdesk keeps the user's marks in `trust.krkde` next to
+  `apps.krkde` (`TrustMark`: app, file or folder; trusted or untrusted; the
   time; for an app, its signature: SHA-256 of the binary). It sends them to
   the compositor on connect (`DeskTrust` snapshot) and when they change.
   `txdesk trust ...` edits the file; a running txdesk notices (stat) and
@@ -124,24 +125,24 @@ touches. Change the code and this file together.
   scene printout, cached per file version (size, time, inode). Recorded,
   not yet checked against marks.
 - **The object in a window** is set through `setWindowObject`; nothing
-  feeds it yet (fact 2 in User Signals: Tesselix apps, AT-SPI, open files).
+  feeds it yet (fact 2 in User Signals: Kuroko apps, AT-SPI, open files).
   Until then a window's trust is its app's.
 - On macOS (the simulator) there is no `/proc`: outside apps have no binary,
-  so they are untrusted unless marked; Tesselix's own apps are trusted.
+  so they are untrusted unless marked; Kuroko's own apps are trusted.
 
 ## Focus and Recent
 
 - **Facts.** txdesk records one use per window from the scene it already
   mirrors: opened, closed, and seconds with keyboard focus. The app is its
-  binary (from `SceneIdentity`), or its app id for Tesselix's own apps.
-  Saved to `facts.tslx` when a window closes and at most once a minute;
+  binary (from `SceneIdentity`), or its app id for Kuroko's own apps.
+  Saved to `facts.krkde` when a window closes and at most once a minute;
   kept 60 days, at most 5000 uses.
 - **Prediction** runs when windows open or close, keyboard focus moves,
   and once a minute (interest fades, cycles start and end). Focus first (up
   to 4), then Recent: the rest, by last opened, time only (up to 4).
-  `focus.tslx` is written, and the compositor told (`DeskNotice`), only
+  `focus.krkde` is written, and the compositor told (`DeskNotice`), only
   when the lists change.
-- **The compositor** reads `focus.tslx` through its backend (the core does
+- **The compositor** reads `focus.krkde` through its backend (the core does
   no I/O), when the launcher opens after a notice; the lists are frozen
   while it is visible. References it cannot resolve (an app no longer
   installed) are dropped. Without the file, Focus is empty and Recent is
@@ -158,19 +159,19 @@ touches. Change the code and this file together.
     are never "app · file".
   - No login events: the first window of the day stands in for the login.
   - No idle detection: a focused window counts while the user is away.
-  - `facts.tslx` and `focus.tslx` are readable by the user only (mode
+  - `facts.krkde` and `focus.krkde` are readable by the user only (mode
     0600) but not encrypted yet, which the design asks for (Top-Level
-    Design, "Sensitive like the history"). `trust.tslx` is 0600 too.
+    Design, "Sensitive like the history"). `trust.krkde` is 0600 too.
 
 ## App icons
 
 - **txdesk draws them, the compositor copies pixels.** After each scan,
   txdesk turns each installed app's icon file (resolved from its desktop
   entry) into 64 and 128 px squares, the icon centered, and keeps them in
-  `icons.tslx` (`IconImage`, straight-alpha ARGB). Only new or changed icon
+  `icons.krkde` (`IconImage`, straight-alpha ARGB). Only new or changed icon
   files (by time) are drawn again. The compositor reads the file when told
   (`DeskNotice.icons_changed`) and never decodes an image format: icon
-  files come from packages Tesselix does not control.
+  files come from packages Kuroko does not control.
 - **PNG** is decoded by txdesk itself (every color type and depth, palettes
   with transparency; interlaced files are skipped). **SVG** goes through
   `rsvg-convert` (librsvg, installed by `setup.sh`). Scaling averages areas
@@ -179,16 +180,16 @@ touches. Change the code and this file together.
   (window pictures stay opaque); the GPU renderer has a matching shader
   branch. The launcher, title bars, panel thumbnails and launch
   placeholders show the icon; an app without one keeps its letter tile.
-  Tesselix's own apps have no icon files yet.
+  Kuroko's own apps have no icon files yet.
 - **Not yet:** icon themes (only the path the desktop entry resolves to),
-  and the compositor reads `icons.tslx` on its own loop (a few hundred KB,
+  and the compositor reads `icons.krkde` on its own loop (a few hundred KB,
   once per change).
 
 ## Text: Hebrew and direction
 
 - **Glyphs:** Inter has no Hebrew, so each UI atlas has a Hebrew fallback
   atlas of the same size and weight, rendered from Noto Sans Hebrew
-  (`fonts/hebrew-*.tslx`, `tools/fontgen/gen_fonts.py --hebrew`). A glyph is
+  (`fonts/hebrew-*.krkde`, `tools/fontgen/gen_fonts.py --hebrew`). A glyph is
   looked up in the UI atlas, then the fallback, else drawn as '?'. Other
   scripts (Arabic, CJK, emoji) still show '?'.
 - **Points and cantillation** (U+0591–U+05C7 marks) are kept as empty,
@@ -202,7 +203,7 @@ touches. Change the code and this file together.
   the left in right-to-left text. Labels are still placed (left, centered)
   as before, whatever their direction.
 - **Text fields** still place the caret and selection in logical order, so
-  editing Hebrew in a Tesselix text field is not right yet.
+  editing Hebrew in a Kuroko text field is not right yet.
 
 ## Animation over slow frames
 
@@ -235,11 +236,11 @@ touches. Change the code and this file together.
   screen). wlroots' Vulkan renderer finds only llvmpipe there. SDL's desktop
   OpenGL renderer needs GLSL 1.30 that virgl does not offer, so the renderer
   is `opengles2` (then `software`). The full-screen window takes the
-  display's exact size. Tesselix's own Linux backend replaces all this.
+  display's exact size. Kuroko's own Linux backend replaces all this.
 
 ## App registry (txdesk)
 
-- txdesk keeps `~/.local/state/tesselix/apps.tslx` (Tesselix
+- txdesk keeps `~/.local/state/kuroko/apps.krkde` (Kuroko
   records `0x05xx`; `txcore/src/types.zig`): the apps, every file the
   scanner has looked at with its size, mtime and inode, and the search
   paths. txdesk is the only writer; a temporary file is renamed over the
@@ -268,7 +269,7 @@ touches. Change the code and this file together.
   `/bin/x` and `/usr/bin/x` both tried); snap and Flatpak by path. snap and
   flatpak themselves are not app keys: their apps are keyed by the path
   that names them (`/snap/bin/chromium`).
-- The running txdesk loads `apps.tslx`, sends the compositor a snapshot
+- The running txdesk loads `apps.krkde`, sends the compositor a snapshot
   when it connects (types `0x0301` DeskApp), scans at start and then every
   5 minutes, checks apt updates (`apt-cache policy`, no root, no network)
   at start and every 6 hours, saves when something changed, then sends the
@@ -285,7 +286,7 @@ touches. Change the code and this file together.
 - Starting an installed app: the compositor runs its command with
   `posix_spawnp` (`txcore/src/proc.zig`), field codes dropped, never
   waiting; SIGCHLD is ignored so children are reaped. Its window opens in
-  Tesselix (see "Wayland server").
+  Kuroko (see "Wayland server").
 - `run.sh` sets `XDG_SESSION_TYPE=wayland`: Chrome and Electron choose
   Wayland from it; without it they try X11 and exit (no X server here).
 - Hidden desktop entries that only carry another id (Chrome's
@@ -322,9 +323,9 @@ touches. Change the code and this file together.
   placeholder that the window replaces, failed after 60 s without one.
   Closing asks the app (xdg_toplevel.close) and the window stays until the
   app destroys it.
-- Socket `$XDG_RUNTIME_DIR/wayland-tesselix-N` with a lock file per name;
-  apps Tesselix starts get WAYLAND_DISPLAY, XDG_SESSION_TYPE=wayland and no
-  DISPLAY. Tesselix's sockets and received fds are close-on-exec.
+- Socket `$XDG_RUNTIME_DIR/wayland-kuroko-N` with a lock file per name;
+  apps Kuroko starts get WAYLAND_DISPLAY, XDG_SESSION_TYPE=wayland and no
+  DISPLAY. Kuroko's sockets and received fds are close-on-exec.
 - txsim polls the server: with apps connected the loop wakes every 4 ms.
   No ping/pong yet (a stuck app is not detected), and a client that
   shrinks its shared-memory file after creating a pool could fault the

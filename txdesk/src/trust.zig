@@ -1,4 +1,4 @@
-//! The user's trust marks as txdesk keeps them: the file `trust.tslx`
+//! The user's trust marks as txdesk keeps them: the file `trust.krkde`
 //! (one TrustHeader, then TrustMark records), the records sent to the
 //! compositor (DeskTrust), and app signatures (SHA-256 of the binary).
 //! The rules that turn marks into a level are shared: txcore/src/trust.zig.
@@ -212,7 +212,7 @@ pub fn short(d: Digest) [16]u8 {
 
 const testing = std.testing;
 
-test "marks survive a round trip through trust.tslx" {
+test "marks survive a round trip through trust.krkde" {
     const gpa = testing.allocator;
     var a = Marks.init(gpa);
     defer a.deinit();

@@ -294,7 +294,7 @@ fn ringCircle(cv: *Canvas, cx: f32, cy: f32, r: f32, c: core.Color) void {
 }
 
 /// App icon placeholder: a rounded square with the first letter.
-/// An app's icon as pixels (from txdesk's icons.tslx), at two sizes.
+/// An app's icon as pixels (from txdesk's icons.krkde), at two sizes.
 pub const Icon = struct {
     small: ?tw.Image = null,
     large: ?tw.Image = null,

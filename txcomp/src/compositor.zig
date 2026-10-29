@@ -1,6 +1,6 @@
 //! Compositor core: window model, attention tiling, focus, chrome, shell UI
 //! and input routing. Backend-independent: a backend (the simulator now,
-//! Tesselix's own DRM/KMS backend on Linux later) feeds input events and a
+//! Kuroko's own DRM/KMS backend on Linux later) feeds input events and a
 //! frame clock, and presents what this core draws: pixels on the CPU, or a
 //! draw list for the GPU renderer (txgl).
 //!
@@ -54,13 +54,13 @@ pub const WindowTrust = struct {
     /// The app and the object open in the window together.
     window: Trust,
     pid: i32,
-    /// The binary the app part was decided by ("" for Tesselix's own apps).
+    /// The binary the app part was decided by ("" for Kuroko's own apps).
     exe: []const u8,
     object: []const u8,
 };
 
-/// How the compositor reads the files txdesk keeps for it (focus.tslx,
-/// icons.tslx), by name. The backend does the reading; the core stays free
+/// How the compositor reads the files txdesk keeps for it (focus.krkde,
+/// icons.krkde), by name. The backend does the reading; the core stays free
 /// of I/O. Returns the file's bytes (owned by the caller), or null.
 pub const StateReader = struct {
     ctx: *anyopaque,
@@ -68,7 +68,7 @@ pub const StateReader = struct {
 };
 
 pub const Params = struct {
-    /// Tesselix defaults (Look and Controls, "Scroll direction").
+    /// Kuroko defaults (Look and Controls, "Scroll direction").
     wheel_natural: bool = false,
     touchpad_natural: bool = true,
     dark: bool = false,
@@ -130,7 +130,7 @@ const Window = struct {
     told_state: u8 = 0xff,
 
     /// Who the window belongs to: the client's process and binary (owned;
-    /// empty for Tesselix's own in-process apps and before the client
+    /// empty for Kuroko's own in-process apps and before the client
     /// comes).
     pid: i32 = 0,
     exe: []u8 = &.{},
@@ -164,6 +164,9 @@ const space_ms = 250;
 /// A drag out of the panel released this fast is a "quick drag": the window
 /// goes next to the panel, whatever the drop point.
 const quick_drag_ms = 300;
+/// While reordering, the pointer rests this long on a tile before its
+/// window moves aside, so tiles only crossed on the way stay put.
+const reorder_dwell_ms = 120;
 /// Two clicks within this time are a double click.
 const double_click_ms = 400;
 /// The outline that travels from an icon to the window it brings up.
@@ -282,10 +285,26 @@ const PanelMenu = struct {
 /// Buttons on the enlarged preview of a panel window.
 pub const PreviewButton = enum(u8) { close, restore, maximize, fullscreen, minimize };
 
+fn sameHandle(a: ?Handle, b: ?Handle) bool {
+    if (a == null or b == null) return a == null and b == null;
+    return a.?.eql(b.?);
+}
+
 const Drag = union(enum) {
     none,
-    /// Press on the title bar; becomes a reorder once it moves.
-    title: struct { h: Handle, x: f32, y: f32, moved: bool },
+    /// Press on the title bar; becomes a reorder once it moves. `want` is
+    /// the window whose tile the pointer is on (since `want_since`);
+    /// `partner` the one already swapped with the dragged window, as a
+    /// preview of the drop.
+    title: struct {
+        h: Handle,
+        x: f32,
+        y: f32,
+        moved: bool,
+        want: ?Handle = null,
+        want_since: i64 = 0,
+        partner: ?Handle = null,
+    },
     /// Dragging a shared border: the boundary follows the pointer from
     /// where it was grabbed.
     col_border: struct { row: u8, start: f32, boundary: f32 },
@@ -364,6 +383,12 @@ pub const Compositor = struct {
     mods: core.input.Mods = .{},
     content_hover: ?Handle = null,
     drag: Drag = .none,
+    /// The tiles when a reorder began: the pointer is tested against them,
+    /// not the previewed layout, so a swap that moves the borders cannot
+    /// flip the target back and forth.
+    reorder_slots: [tiling.max_windows]tiling.Slot = undefined,
+    reorder_tiles: [tiling.max_windows]Handle = undefined,
+    reorder_n: usize = 0,
     tracker: core.wheel.Tracker = .{},
     cursor: core.input.Cursor = .arrow,
 
@@ -409,7 +434,7 @@ pub const Compositor = struct {
     influence_stale: bool = true,
     /// Wall clock (Unix seconds), from the backend; 0 when unknown.
     wall_s: i64 = 0,
-    /// App icons as pixels (txdesk's icons.tslx); read again when txdesk
+    /// App icons as pixels (txdesk's icons.krkde); read again when txdesk
     /// says they changed. `icon_ids` are the GPU picture ids, one per icon.
     icons: core.icons.Set,
     icon_ids: std.ArrayList(u64) = .empty,
@@ -1320,6 +1345,10 @@ pub const Compositor = struct {
                     self.full_redraw = true;
                     return;
                 }
+                if (self.drag == .title and k.pressed and k.key == .escape) {
+                    self.cancelReorder(now);
+                    return;
+                }
                 if (self.chooser != null and k.pressed and k.key == .escape) {
                     self.chooser = null;
                     self.full_redraw = true;
@@ -1352,7 +1381,7 @@ pub const Compositor = struct {
             .wheel => |w0| {
                 if (self.launcher.open) return;
                 var w = w0;
-                // Tesselix's own direction defaults, per device type.
+                // Kuroko's own direction defaults, per device type.
                 const natural = if (w.source == .touchpad) self.params.touchpad_natural else self.params.wheel_natural;
                 if (natural) {
                     w.dy = -w.dy;
@@ -1531,13 +1560,13 @@ pub const Compositor = struct {
         self.publishWindow(h, .opened);
     }
 
-    /// The environment of the apps Tesselix starts (WAYLAND_DISPLAY of its
+    /// The environment of the apps Kuroko starts (WAYLAND_DISPLAY of its
     /// own server, ...): "NAME=value" sets, "NAME" removes.
     pub fn setChildEnv(self: *Compositor, env: []const []const u8) void {
         self.child_env = env;
     }
 
-    /// A window from an app outside Tesselix (a Wayland client). It takes
+    /// A window from an app outside Kuroko (a Wayland client). It takes
     /// the place of its app's launch placeholder when there is one;
     /// otherwise it opens like any new window. The app is found by its
     /// binary in the registry, then by its app id.
@@ -1664,7 +1693,7 @@ pub const Compositor = struct {
         self.gpa.free(self.influence_bytes);
         self.influence_bytes = &.{};
         self.influence.picks.clearRetainingCapacity();
-        const bytes = r.read(r.ctx, self.gpa, "focus.tslx") orelse return;
+        const bytes = r.read(r.ctx, self.gpa, "focus.krkde") orelse return;
         self.influence_bytes = bytes;
         core.influence.decode(self.gpa, bytes, &self.influence) catch return;
         self.influence_ok = true;
@@ -1676,7 +1705,7 @@ pub const Compositor = struct {
         if (!self.icons_stale) return;
         const r = self.state_reader orelse return;
         self.icons_stale = false;
-        const bytes = r.read(r.ctx, self.gpa, "icons.tslx") orelse return;
+        const bytes = r.read(r.ctx, self.gpa, "icons.krkde") orelse return;
         defer self.gpa.free(bytes);
         self.icons.decode(bytes) catch return;
         self.icon_ids.clearRetainingCapacity();
@@ -1703,7 +1732,7 @@ pub const Compositor = struct {
     }
 
     /// The launcher index of an influence reference: an installed app by
-    /// its binary, or one of Tesselix's own apps by its app id. Unknown
+    /// its binary, or one of Kuroko's own apps by its app id. Unknown
     /// references are dropped (references, not free content).
     fn resolveApp(self: *const Compositor, ref: []const u8) ?usize {
         for (self.apps, 0..) |a, i| {
@@ -1780,7 +1809,7 @@ pub const Compositor = struct {
         self.refreshAllTrust();
     }
 
-    /// The app part of a window's trust. Tesselix's own apps are trusted.
+    /// The app part of a window's trust. Kuroko's own apps are trusted.
     /// An installed app counts only when the window's binary is the one
     /// the registry lists: a client that only claims an app id does not
     /// inherit the app's trust.
@@ -1864,7 +1893,7 @@ pub const Compositor = struct {
         self.refreshAllTrust();
     }
 
-    /// Marks the app of a window (its binary). Tesselix's own apps are
+    /// Marks the app of a window (its binary). Kuroko's own apps are
     /// always trusted and cannot be marked.
     pub fn markWindowApp(self: *Compositor, h: Handle, level: ?Trust) void {
         const t = self.trustOf(h) orelse return;
@@ -2494,7 +2523,20 @@ pub const Compositor = struct {
                 return;
             },
             .title => |*d| {
-                if (@abs(x - d.x) + @abs(y - d.y) > 5) d.moved = true;
+                if (!d.moved and @abs(x - d.x) + @abs(y - d.y) > 5) {
+                    d.moved = true;
+                    const vis = self.visibleTiles();
+                    self.reorder_n = @min(self.slot_count, vis.len);
+                    @memcpy(self.reorder_slots[0..self.reorder_n], self.slots[0..self.reorder_n]);
+                    @memcpy(self.reorder_tiles[0..self.reorder_n], vis[0..self.reorder_n]);
+                }
+                if (d.moved) {
+                    const want = self.reorderTarget(d.h, x, y);
+                    if (!sameHandle(want, d.want)) {
+                        d.want = want;
+                        d.want_since = now;
+                    }
+                }
                 self.cursor = if (d.moved) .grab else .arrow;
                 self.full_redraw = true;
                 return;
@@ -2845,39 +2887,100 @@ pub const Compositor = struct {
                     if (from) |f| self.startCue(p.h, f, now);
                 }
             },
-            .title => |t| {
-                if (!t.moved) return;
+            .title => |t0| {
+                if (!t0.moved) return;
+                var t = t0;
                 // Dropped on the panel: minimize.
                 if (x < @as(f32, @floatFromInt(self.panelW())) and y > shell.top_bar_h) {
+                    self.previewSwap(&t, null, now);
                     self.shelve(t.h, now);
                     return;
                 }
-                // Dropping a window on another tile swaps the two windows.
-                const target = self.tileAt(x, y) orelse return;
-                if (target.eql(t.h)) return;
-                var ia: ?usize = null;
-                var ib: ?usize = null;
-                for (self.tiles.items, 0..) |h, i| {
-                    if (h.eql(t.h)) ia = i;
-                    if (h.eql(target)) ib = i;
-                }
-                if (ia != null and ib != null) {
-                    std.mem.swap(Handle, &self.tiles.items[ia.?], &self.tiles.items[ib.?]);
-                    self.relayout(now, true);
-                }
+                // Dropping a window on another tile swaps the two windows
+                // (the preview may not have caught up with a fast drop).
+                self.previewSwap(&t, self.reorderTarget(t.h, x, y), now);
+                self.landFromThumb(t.h, now);
             },
             else => {},
         }
         self.cursor = .arrow;
     }
 
-    /// The window whose tile (allocated area) contains the point.
-    fn tileAt(self: *Compositor, x: f32, y: f32) ?Handle {
-        const vis = self.visibleTiles();
-        for (self.slots[0..self.slot_count], 0..) |sl, i| {
-            if (i < vis.len and sl.slot.contains(x, y)) return vis[i];
+    /// The window a reordered window `h` would swap with when dropped at
+    /// (x, y): the owner of that point's tile when the drag began. Its own
+    /// tile, and anywhere outside the tiles, is no target.
+    fn reorderTarget(self: *const Compositor, h: Handle, x: f32, y: f32) ?Handle {
+        for (self.reorder_slots[0..self.reorder_n], self.reorder_tiles[0..self.reorder_n]) |sl, th| {
+            if (!sl.slot.contains(x, y)) continue;
+            if (th.eql(h) or !contains(self.tiles.items, th)) return null;
+            return th;
         }
         return null;
+    }
+
+    /// Shows the drop before it happens: undoes the swap with the previous
+    /// partner and swaps the dragged window with `to`. Both windows move
+    /// to their new tiles with the usual animation.
+    fn previewSwap(self: *Compositor, d: anytype, to: ?Handle, now: i64) void {
+        if (sameHandle(d.partner, to)) return;
+        if (d.partner) |p| self.swapTiles(d.h, p);
+        if (to) |t| self.swapTiles(d.h, t);
+        d.partner = to;
+        self.relayout(now, true);
+    }
+
+    fn swapTiles(self: *Compositor, a: Handle, b: Handle) void {
+        var ia: ?usize = null;
+        var ib: ?usize = null;
+        for (self.tiles.items, 0..) |h, i| {
+            if (h.eql(a)) ia = i;
+            if (h.eql(b)) ib = i;
+        }
+        if (ia != null and ib != null) std.mem.swap(Handle, &self.tiles.items[ia.?], &self.tiles.items[ib.?]);
+    }
+
+    /// Escape during a reorder: everything goes back where it was.
+    fn cancelReorder(self: *Compositor, now: i64) void {
+        var d = self.drag.title;
+        self.drag = .none;
+        self.cursor = .arrow;
+        self.previewSwap(&d, null, now);
+        if (d.moved) self.landFromThumb(d.h, now);
+        self.full_redraw = true;
+    }
+
+    /// The window dragged by its title bar lands in its tile from the
+    /// thumbnail under the pointer.
+    fn landFromThumb(self: *Compositor, h: Handle, now: i64) void {
+        const g = self.windows.acquire(h) orelse return;
+        defer g.release();
+        g.ptr.from = RectF.from(self.dragThumbRect());
+        g.ptr.anim_start = now;
+    }
+
+    /// The thumbnail that follows the pointer while a window is dragged.
+    fn dragThumbRect(self: *const Compositor) Rect {
+        const w: i32 = 200;
+        const h: i32 = 130;
+        return .{ .x = @as(i32, @intFromFloat(self.px)) - @divTrunc(w, 2), .y = @as(i32, @intFromFloat(self.py)) - 16, .w = w, .h = h };
+    }
+
+    fn drawDragThumb(self: *Compositor, cv: *Canvas, w: *Window) void {
+        const th = &self.theme;
+        const thumb = self.dragThumbRect();
+        cv.fillRect(thumb.translate(0, 4), th.get(.shadow));
+        cv.fillRect(thumb, th.get(.surface));
+        if (w.pixels.len > 0) cv.blitScaled(w.image(), thumb, 255);
+        cv.strokeRect(thumb, 2, th.get(.accent));
+    }
+
+    /// The window being reordered, once the drag has moved: it is drawn as
+    /// a thumbnail under the pointer and a placeholder in its tile.
+    fn reordering(self: *const Compositor) ?Handle {
+        return switch (self.drag) {
+            .title => |d| if (d.moved) d.h else null,
+            else => null,
+        };
     }
 
     /// Where a window dropped at (x, y) joins the tiles: before the tile
@@ -3121,6 +3224,16 @@ pub const Compositor = struct {
         defer self.windows.endEvent();
         var need = self.full_redraw;
 
+        // Reorder: once the pointer has rested on a tile, its window moves
+        // aside into the dragged window's tile.
+        switch (self.drag) {
+            .title => |*d| if (d.moved and !sameHandle(d.want, d.partner)) {
+                if (now - d.want_since >= reorder_dwell_ms * ms) self.previewSwap(d, d.want, now);
+                need = true;
+            },
+            else => {},
+        }
+
         var hs: std.ArrayList(Handle) = .empty;
         defer hs.deinit(self.gpa);
         self.windows.handles(&hs, self.gpa) catch {};
@@ -3325,7 +3438,10 @@ pub const Compositor = struct {
         }
 
         self.drawDividers(cv, false);
-        for (self.visibleTiles()) |wh| self.drawWindow(cv, wh, now);
+        const lifted = self.reordering();
+        for (self.visibleTiles()) |wh| {
+            if (!sameHandle(lifted, wh)) self.drawWindow(cv, wh, now);
+        }
         self.drawDividers(cv, true);
         self.drawShelf(cv, now);
         self.drawFlying(cv, now);
@@ -3522,33 +3638,31 @@ pub const Compositor = struct {
         }
     }
 
-    fn drawDragFeedback(self: *Compositor, cv: *Canvas, _: i64) void {
+    fn drawDragFeedback(self: *Compositor, cv: *Canvas, now: i64) void {
         const th = &self.theme;
         switch (self.drag) {
             .title => |d| {
                 if (!d.moved) return;
-                // While dragging, every tile is outlined; the one under the
-                // pointer is where the window will go.
-                const target = self.tileAt(self.px, self.py);
+                // While dragging, every tile is outlined. The tile the
+                // pointer rests on brightens until its window moves aside.
                 const vis = self.visibleTiles();
-                for (self.slots[0..self.slot_count], 0..) |sl, i| {
-                    if (i >= vis.len) break;
-                    const r = sl.slot.inset(4);
-                    const is_target = target != null and target.?.eql(vis[i]) and !vis[i].eql(d.h);
-                    if (is_target) {
-                        cv.fillRoundRect(r, 10, th.get(.accent).fade(0.14));
-                        cv.strokeRoundRect(r, 10, 3, th.get(.accent));
-                    } else {
-                        cv.strokeRoundRect(r, 10, 1.5, th.get(.accent).fade(0.45));
-                    }
+                for (self.slots[0..@min(self.slot_count, vis.len)], vis[0..@min(self.slot_count, vis.len)]) |sl, vh| {
+                    if (vh.eql(d.h)) continue;
+                    const pending = sameHandle(d.want, vh) and !sameHandle(d.partner, vh);
+                    cv.strokeRoundRect(sl.slot.inset(4), 10, if (pending) 3 else 1.5, th.get(.accent).fade(if (pending) 0.8 else 0.45));
                 }
                 const g = self.windows.acquire(d.h) orelse return;
                 defer g.release();
-                const ghost = Rect{ .x = @as(i32, @intFromFloat(self.px)) - 80, .y = @as(i32, @intFromFloat(self.py)) - 12, .w = 160, .h = 24 };
-                cv.fillRoundRect(ghost, 6, th.get(.chrome_focused).fade(0.95));
-                cv.strokeRoundRect(ghost, 6, 0, th.get(.accent));
+                // Where the window will land: a placeholder in its tile,
+                // moving with the layout, with the window's title on it.
+                const r = currentFrame(g.ptr, now);
+                cv.fillRoundRect(r, 10, th.get(.accent).fade(0.14));
+                cv.strokeRoundRect(r, 10, 3, th.get(.accent));
                 const title = if (g.ptr.surface) |s| s.title() else self.appName(g.ptr.app);
-                _ = cv.textEllipsis(@floatFromInt(ghost.x + 10), @floatFromInt(ghost.y + 4), title, 140, .{}, th.get(.text));
+                const m = tw.font.Metrics.of(.{ .size = .large }, self.scale);
+                const tw_ = @min(m.width(title), @as(f32, @floatFromInt(@max(0, r.w - 32))));
+                _ = cv.textEllipsis(@as(f32, @floatFromInt(r.x)) + (@as(f32, @floatFromInt(r.w)) - tw_) / 2, @as(f32, @floatFromInt(r.y + @divTrunc(r.h, 2) - 12)), title, tw_, .{ .size = .large }, th.get(.text_dim));
+                self.drawDragThumb(cv, g.ptr);
             },
             .panel => |d| {
                 if (!d.moved or self.px < @as(f32, @floatFromInt(self.panelW()))) return;
@@ -3567,13 +3681,7 @@ pub const Compositor = struct {
                 // The window itself, as a small thumbnail under the pointer.
                 const g = self.windows.acquire(d.h) orelse return;
                 defer g.release();
-                const tw_: i32 = 200;
-                const th_: i32 = 130;
-                const thumb = Rect{ .x = @as(i32, @intFromFloat(self.px)) - @divTrunc(tw_, 2), .y = @as(i32, @intFromFloat(self.py)) - 16, .w = tw_, .h = th_ };
-                cv.fillRect(thumb.translate(0, 4), th.get(.shadow));
-                cv.fillRect(thumb, th.get(.surface));
-                if (g.ptr.pixels.len > 0) cv.blitScaled(g.ptr.image(), thumb, 255);
-                cv.strokeRect(thumb, 2, th.get(.accent));
+                self.drawDragThumb(cv, g.ptr);
             },
             .col_border, .row_border => {},
             else => {},

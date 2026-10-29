@@ -1,4 +1,4 @@
-# Tesselix — Debugging Foundations
+# Kuroko — Debugging Foundations
 
 Oct 27, 2026 · @feral keep
 
@@ -13,7 +13,7 @@ Notation follows the Top-Level Design: **(agreed)**, **(suggestion)**, **[compos
 ## Principles (suggestion)
 
 1. **Observing never disturbs.** Recording costs a fixed, small amount on the hot path: no allocation, no system call, no lock, no waiting. If the reader falls behind, events are dropped and the drop is itself recorded. The compositor never waits on a debugger (Architecture, guiding rule).
-2. **One stream, one format.** Everything observable is a trace event, and every trace event is a Tesselix record. Live streams and recorded files are the same records, so a viewer cannot tell them apart.
+2. **One stream, one format.** Everything observable is a trace event, and every trace event is a Kuroko record. Live streams and recorded files are the same records, so a viewer cannot tell them apart.
 3. **Everything has an identity.** Every object an event mentions has a stable ID that is never reused. Names and properties are sent once, when they change, not repeated in every event.
 4. **Every effect points to its cause.** Events carry the ID of what caused them, so a chain can be followed: a key press, the focus change it caused, the configure sent to the app, the app's commit, the frame that showed it.
 5. **The frame is the unit of time.** Every event in the compositor belongs to a numbered frame, and each frame records what changed, what was drawn and how long each stage took.
@@ -25,7 +25,7 @@ Notation follows the Top-Level Design: **(agreed)**, **(suggestion)**, **[compos
 
 ### The record (suggestion)
 
-A trace event is a Tesselix record (`txcore.format`) with a fixed-width payload header, followed by kind-specific fields:
+A trace event is a Kuroko record (`txcore.format`) with a fixed-width payload header, followed by kind-specific fields:
 
 | Field | Size | What it is |
 | --- | --- | --- |
@@ -53,7 +53,7 @@ An operation that takes time (a frame, a layout pass, an animation, an app's con
 The cause field links events into chains across components and processes:
 
 - An input event gets an ID when it enters the compositor. Everything it triggers (focus, hit test, layout, a message to an app) carries that ID or a span under it.
-- Messages that cross a process boundary carry the cause along: the compositor's configure to an app has an ID, and txwl records the app's matching commit with that ID as cause. For apps that use Tesselix's widget library, the Tesselix protocol carries the cause explicitly; for other Wayland apps, txwl infers it from the protocol (configure serial and `ack_configure`).
+- Messages that cross a process boundary carry the cause along: the compositor's configure to an app has an ID, and txwl records the app's matching commit with that ID as cause. For apps that use Kuroko's widget library, the Kuroko protocol carries the cause explicitly; for other Wayland apps, txwl infers it from the protocol (configure serial and `ack_configure`).
 - A frame lists the commits and changes it shows, so "this key press became visible in frame N, 31 ms later" is a query, not a guess.
 
 ## Identity
@@ -91,19 +91,19 @@ Tracing is always on, at a level cheap enough to ship.
 | Level | Contents | Default |
 | --- | --- | --- |
 | Always | Lifecycle (objects created and destroyed), frame summaries, missed deadlines, errors and repairs, drops, app connects and disconnects | On, in every build |
-| Detail | Full frame records with stages and damage, input events (see Privacy), layout decisions, animations, Tesselix protocol messages | Off; turned on at run time |
+| Detail | Full frame records with stages and damage, input events (see Privacy), layout decisions, animations, Kuroko protocol messages | Off; turned on at run time |
 | Protocol | Every Wayland request and event per client, with arguments | Off; per client |
 | Capture | Layer and frame pixels | Off; on request |
 
-- Categories are switched on and off **at the source**, at run time, by a control message over the Tesselix protocol. What is off costs one branch.
+- Categories are switched on and off **at the source**, at run time, by a control message over the Kuroko protocol. What is off costs one branch.
 - A debugger can raise the level for one window, one client or one category without raising it everywhere.
 
 ## Transport
 
 - **Rings in shared memory.** Each source writes into its own fixed-size ring buffer in memory (suggestion: one per thread). Writing is copying a fixed-size record. No lock is shared with the reader.
 - **Readers drain the ring.** A collector process (desktop side) maps the rings and reads from them. If it is slow or absent, the ring overwrites the oldest events and the writer counts what was lost. The next event after a loss is a "dropped N events" record, so gaps are never silent.
-- **The recent past is always there.** Even with no debugger attached, the ring holds the last few seconds. When something goes wrong (a missed deadline, a crash, a key combination from the user), the collector saves the ring to a `.tslx` file: a flight recorder.
-- **Files.** Recorded traces are `.tslx` files of the same records, with snapshots at intervals so a viewer can seek without reading from the start.
+- **The recent past is always there.** Even with no debugger attached, the ring holds the last few seconds. When something goes wrong (a missed deadline, a crash, a key combination from the user), the collector saves the ring to a `.krkde` file: a flight recorder.
+- **Files.** Recorded traces are `.krkde` files of the same records, with snapshots at intervals so a viewer can seek without reading from the start.
 
 ## State and snapshots
 
@@ -121,13 +121,13 @@ The core already takes time as a parameter (`now`) instead of reading a clock. T
 
 ## The debugger is a client
 
-- The debugger runs as its own process and talks to the compositor only over the Tesselix protocol. It is a privileged client (like other Tesselix processes, never an arbitrary app).
+- The debugger runs as its own process and talks to the compositor only over the Kuroko protocol. It is a privileged client (like other Kuroko processes, never an arbitrary app).
 - **Overlays are drawn by the compositor,** because only it can draw over other windows. The debugger sends what to show (outlines, labels, highlighted layers), and the compositor draws it as its own layer, marked as debug. Overlays follow the human-factors rules: nothing flashes more than 3 times per second, so damage is shown as outlines that fade, not as flashes.
 - **A debugger that hangs or crashes changes nothing** for the compositor: it is one more subscriber that falls behind.
 
 ## Apps
 
-- Apps built on Tesselix's widget library write to their own ring, in the same format, with the same clock: widget events, layout, their own frame stages. Their streams merge with the compositor's by time and cause.
+- Apps built on Kuroko's widget library write to their own ring, in the same format, with the same clock: widget events, layout, their own frame stages. Their streams merge with the compositor's by time and cause.
 - Other Wayland apps are seen from outside: txwl's protocol trace, their commits and the frames that showed them.
 
 ## Privacy
@@ -136,7 +136,7 @@ Traces can hold what the user types and reads.
 
 - **Typed text is not recorded by default.** Key events record that a key was pressed and its kind (letter, digit, modifier, navigation), not which letter. Full key recording is a separate, explicit switch, shown in the top bar while it is on.
 - Window titles and file names are recorded, so saved traces follow the same at-rest rules as the history (Top-Level Design, "Sensitive like the history").
-- Only Tesselix's own processes may attach a debugger or read the rings.
+- Only Kuroko's own processes may attach a debugger or read the rings.
 
 ## What this means for the code now
 

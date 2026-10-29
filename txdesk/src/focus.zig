@@ -4,8 +4,8 @@
 //!
 //! The recorder turns the compositor's scene into facts: one use per window
 //! (an episode) with when it opened and closed and how long it had keyboard
-//! focus (facts.tslx). The predictor reads the facts and writes the
-//! launcher's lists (focus.tslx, txcore/src/influence.zig):
+//! focus (facts.krkde). The predictor reads the facts and writes the
+//! launcher's lists (focus.krkde, txcore/src/influence.zig):
 //!
 //!   Focus first, at most 4:
 //!     - cycles that are due: an app opened in the first hour of the day on
@@ -56,7 +56,7 @@ pub const Use = struct {
 /// A window on screen now, as the scene shows it.
 pub const WindowNow = struct {
     id: u64,
-    /// Its binary, or its app id for Tesselix's own apps.
+    /// Its binary, or its app id for Kuroko's own apps.
     app: []const u8,
     focused: bool,
 };
@@ -433,7 +433,7 @@ test "facts survive a round trip; open uses are saved as they stand" {
     const t0: i64 = 1_760_000_000;
     _ = try f.sync(&.{.{ .id = 1, .app = "/usr/bin/a", .focused = true }}, t0);
     _ = try f.sync(&.{}, t0 + 100);
-    _ = try f.sync(&.{.{ .id = 2, .app = "org.tesselix.notes", .focused = true }}, t0 + 200);
+    _ = try f.sync(&.{.{ .id = 2, .app = "org.kuroko.notes", .focused = true }}, t0 + 200);
     const bytes = try f.encode(gpa, t0 + 260);
     defer gpa.free(bytes);
 
@@ -445,5 +445,5 @@ test "facts survive a round trip; open uses are saved as they stand" {
     try testing.expectEqual(@as(usize, 2), g.uses.items.len);
     try testing.expectEqual(@as(u32, 100), g.uses.items[0].focused_s);
     try testing.expectEqual(@as(u32, 60), g.uses.items[1].focused_s);
-    try testing.expectEqualStrings("org.tesselix.notes", g.uses.items[1].app);
+    try testing.expectEqualStrings("org.kuroko.notes", g.uses.items[1].app);
 }

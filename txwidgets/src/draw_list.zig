@@ -100,7 +100,7 @@ test "recording and replaying draws the same pixels" {
             cv.fillCircle(60, 20, 7.5, Color.rgba(0xCC2222, 200));
             cv.line(40, 40, 90, 55, 2, Color.rgb(0x333333));
             cv.dashedRect(.{ .x = 50, .y = 30, .w = 40, .h = 20 }, 1, 4, 3, Color.rgb(0x8800AA));
-            _ = cv.text(4, 40, "Tesselix", .{}, Color.rgb(0x111111));
+            _ = cv.text(4, 40, "Kuroko", .{}, Color.rgb(0x111111));
             cv.blit(im, 70, 2);
             cv.blitScaled(im, .{ .x = 20, .y = 30, .w = 25, .h = 17 }, 180);
             cv.triangleRight(90, 10, 5, Color.rgb(0x444444));

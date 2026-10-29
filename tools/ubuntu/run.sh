@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs Tesselix full screen on the VM's own screen: the compositor with the
+# Runs Kuroko full screen on the VM's own screen: the compositor with the
 # desktop and the apps (txsim, the simulator), and the desktop service
 # (txdesk) in the background.
 #
@@ -15,16 +15,16 @@
 # kiosk (wlroots) that shows one app full screen. SDL3's own KMS/DRM driver
 # cannot be used on UTM: it puts ARGB8888 frames on the screen, and the
 # virtio-gpu primary plane accepts only XRGB8888 (`kmscube -f AR24` fails
-# the same way), so the screen stays blank. This lasts until Tesselix has
+# the same way), so the screen stays blank. This lasts until Kuroko has
 # its own Linux backend.
 #
 # Run it from the VM's console (cage needs the console's seat).
 # Quit: from SSH,  pkill txsim   (prints the timing summary; cage exits with it).
 #       pkill -9 txsim if it ever hangs.
-# Logs: ~/.cache/tesselix/txsim.log (txsim and cage), txdesk.log.
+# Logs: ~/.cache/kuroko/txsim.log (txsim and cage), txdesk.log.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
-cache="$HOME/.cache/tesselix"
+cache="$HOME/.cache/kuroko"
 
 # Run from a local copy: shared folders may drop the exec bit and are slow.
 bin="$cache/bin"
@@ -80,7 +80,7 @@ export SDL_RENDER_DRIVER="${SDL_RENDER_DRIVER:-opengles2,software}"
 # read this (Chrome and Electron fall back to X11 without it, and there is
 # no X server here).
 export XDG_SESSION_TYPE=wayland
-# Keep Tesselix's own sockets in the user's runtime dir.
+# Keep Kuroko's own sockets in the user's runtime dir.
 if [ -z "$XDG_RUNTIME_DIR" ] && [ -d "/run/user/$(id -u)" ]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 fi

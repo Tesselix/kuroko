@@ -1,4 +1,4 @@
-//! Tesselix structure type IDs and shared message structures.
+//! Kuroko structure type IDs and shared message structures.
 //!
 //! Open question (Top-Level Design): one 16-bit space or split by component.
 //! For now the high byte names the component:
@@ -6,10 +6,10 @@
 //!   0x02xx  compositor → desktop services (scene graph)
 //!   0x03xx  desktop services → compositor (actions)
 //!   0x04xx  widget protocol (Mode B), reserved
-//!   0x05xx  app registry (txdesk's apps.tslx)
-//!   0x06xx  trust marks (txdesk's trust.tslx)
-//!   0x08xx  facts and influence (facts.tslx, focus.tslx), app icons
-//!           (icons.tslx)
+//!   0x05xx  app registry (txdesk's apps.krkde)
+//!   0x06xx  trust marks (txdesk's trust.krkde)
+//!   0x08xx  facts and influence (facts.krkde, focus.krkde), app icons
+//!           (icons.krkde)
 //!   0x7Fxx  tests
 
 const std = @import("std");
@@ -131,7 +131,7 @@ comptime {
 
 // ------------------------------------------------------- app registry
 //
-// apps.tslx, kept by txdesk: one AppsHeader, then AppEntry, ScanEntry and
+// apps.krkde, kept by txdesk: one AppsHeader, then AppEntry, ScanEntry and
 // SearchPath records in any order. Enums are non-exhaustive: a value this
 // build does not know reads as itself, never as illegal behavior.
 
@@ -240,7 +240,7 @@ comptime {
 //
 // txdesk keeps the registry; the compositor keeps a read-only copy of what
 // it shows. txdesk sends a snapshot when it connects (and when asked), and
-// after every save of apps.tslx the apps that changed, then a `saved`
+// after every save of apps.krkde the apps that changed, then a `saved`
 // marker with the save count, even when no app changed. A count that skips
 // one means something was lost: the compositor asks for a snapshot.
 
@@ -301,7 +301,7 @@ comptime {
 //
 // Trust is the app and the object open in its window together
 // (docs/user-signals.md). The user marks apps, files and folders; txdesk
-// keeps the marks in trust.tslx (one TrustHeader, then TrustMark records)
+// keeps the marks in trust.krkde (one TrustHeader, then TrustMark records)
 // and sends them to the compositor (DeskTrust), which decides each
 // window's trust with the shared rules in txcore/src/trust.zig.
 
@@ -368,10 +368,10 @@ pub const TrustRequest = extern struct {
 
 /// Compositor → services: who a window belongs to, sent before its
 /// `opened` SceneWindow and again when its trust changes. Trailing data:
-/// the binary (/proc/<pid>/exe), "" for Tesselix's own in-process apps.
+/// the binary (/proc/<pid>/exe), "" for Kuroko's own in-process apps.
 pub const SceneIdentity = extern struct {
     window_id: u64,
-    /// 0 when unknown (Tesselix's own apps in the simulator).
+    /// 0 when unknown (Kuroko's own apps in the simulator).
     pid: i32,
     /// The window's trust as the compositor decided it.
     trust: Trust,
@@ -398,8 +398,8 @@ comptime {
 // ------------------------------------------------- facts and influence
 //
 // Top-Level Design, "Influence files". The recorder (txdesk) writes the
-// facts: what was used, when, for how long (facts.tslx). A predictor reads
-// them and writes what the desktop should offer (focus.tslx): the Focus and
+// facts: what was used, when, for how long (facts.krkde). A predictor reads
+// them and writes what the desktop should offer (focus.krkde): the Focus and
 // Recent lists of the launcher. The compositor only reads the influence
 // file, when txdesk says it changed (DeskNotice), and freezes it while the
 // launcher is visible.
@@ -409,7 +409,7 @@ pub const FactsHeader = extern struct {
 };
 
 /// One use of an app: a window's life (an episode). Trailing data: the app
-/// (its binary, or its app id for Tesselix's own apps), then the object
+/// (its binary, or its app id for Kuroko's own apps), then the object
 /// open in it ("" when unknown).
 pub const FactUse = extern struct {
     /// Unix seconds.
@@ -466,15 +466,15 @@ pub const SceneSession = extern struct {
 };
 
 pub const DeskNoticeKind = enum(u8) {
-    /// focus.tslx was written again: read it when next needed.
+    /// focus.krkde was written again: read it when next needed.
     influence_changed,
-    /// icons.tslx was written again.
+    /// icons.krkde was written again.
     icons_changed,
     _,
 };
 
 /// txdesk → compositor: something changed that the compositor reads itself.
-/// An app's icon, drawn to pixels by txdesk (icons.tslx), so the
+/// An app's icon, drawn to pixels by txdesk (icons.krkde), so the
 /// compositor never decodes an image file. Square, the icon centered.
 /// Trailing data: the app's key (its binary), then w * h pixels, 0xAARRGGBB
 /// little-endian, straight alpha.

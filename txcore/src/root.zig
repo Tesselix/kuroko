@@ -1,4 +1,4 @@
-//! txcore: what every Tesselix component shares. Pure Zig, no OS
+//! txcore: what every Kuroko component shares. Pure Zig, no OS
 //! dependencies beyond std, builds and tests on macOS and Linux.
 
 pub const format = @import("format.zig");

@@ -1,5 +1,5 @@
 .{
-    .name = .tesselix,
+    .name = .kuroko,
     .version = "0.0.1",
     .fingerprint = 0xa6daa4b5494c32,
     // Latest solid Zig (docs/dependencies.md); 0.17 is solid from 2027-01-04.

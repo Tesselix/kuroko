@@ -1,16 +1,16 @@
 #!/bin/sh
-# Once, on the Ubuntu ARM VM: what Tesselix needs to run on the bare
+# Once, on the Ubuntu ARM VM: what Kuroko needs to run on the bare
 # console (no X, no Wayland). SDL3 draws through KMS/DRM with EGL/GLES on
 # Mesa (virgl in UTM) and reads the keyboard and mouse from the kernel (evdev).
 set -e
 sudo apt-get update
 # libSDL3; the GBM/EGL/GLES libraries; Mesa's drivers (virgl for UTM's
-# virtio-gpu-gl); cage, the Wayland kiosk run.sh shows Tesselix in, and
+# virtio-gpu-gl); cage, the Wayland kiosk run.sh shows Kuroko in, and
 # wlr-randr to set its screen size (TX_MODE);
 # kmscube and drm-info to test the screen alone.
 sudo apt-get install -y libsdl3-0 libgbm1 libegl1 libegl-mesa0 libgles2 \
     libgl1-mesa-dri cage wlr-randr kmscube drm-info
-# For apps in Tesselix: the keyboard map apps compile (xkb-data), SVG app
+# For apps in Kuroko: the keyboard map apps compile (xkb-data), SVG app
 # icons drawn to pixels (rsvg-convert), and fonts for Chinese, Japanese and
 # Korean text and for emoji.
 sudo apt-get install -y xkb-data librsvg2-bin fonts-noto-cjk fonts-noto-color-emoji

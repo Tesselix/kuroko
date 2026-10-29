@@ -1,4 +1,4 @@
-//! The app registry in memory, and its file `apps.tslx` (Tesselix records,
+//! The app registry in memory, and its file `apps.krkde` (Kuroko records,
 //! see txcore/src/types.zig). txdesk is its only writer.
 //!
 //! Strings live in the store's arena. A scan changes few strings, so the
@@ -187,7 +187,7 @@ pub const Store = struct {
     pub fn decode(self: *Store, bytes: []const u8, log: *format.RepairLog) !void {
         var reader = format.Reader.init(bytes, &types.known);
         while (reader.next()) |rec| {
-            if (rec.swapped) continue; // never written by Tesselix on Linux
+            if (rec.swapped) continue; // never written by Kuroko on Linux
             switch (rec.type_id) {
                 types.apps_header => {
                     const h = format.readStruct(types.AppsHeader, rec);
@@ -294,7 +294,7 @@ fn sample(store: *Store) !void {
     store.save_count = 41;
 }
 
-test "the store survives a round trip through apps.tslx" {
+test "the store survives a round trip through apps.krkde" {
     const gpa = std.testing.allocator;
     var a = Store.init(gpa);
     defer a.deinit();

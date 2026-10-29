@@ -1,4 +1,4 @@
-# Tesselix — Widget Framework
+# Kuroko — Widget Framework
 
 Oct 14, 2026 · @feral keep
 
@@ -6,8 +6,8 @@ Oct 14, 2026 · @feral keep
 
 One widget framework serves two kinds of apps **(agreed)**:
 
-- **Tesselix's own desktop apps in Zig** (file manager, process window, trash, settings…). They must run as fast as possible.
-- **Third-party apps for Tesselix in any language.** Developers can ship Tesselix apps without writing Zig or graphics code.
+- **Kuroko's own desktop apps in Zig** (file manager, process window, trash, settings…). They must run as fast as possible.
+- **Third-party apps for Kuroko in any language.** Developers can ship Kuroko apps without writing Zig or graphics code.
 
 This document builds on the Top-Level Design. Where they differ, the Top-Level Design wins. Notation is the same: **(agreed)**, **(suggestion)**, **[compositor]**, **[desktop]**.
 
@@ -18,13 +18,13 @@ The first draft put the widget tree inside the compositor and used text messages
 | First draft | Corrected | Why |
 | --- | --- | --- |
 | Widget tree, layout and rendering inside the compositor | In the app's own process, or in a UI host process per app [desktop] | Shell apps are separate processes; a bug in a file manager's list must never crash the session. The compositor keeps only its built-in UI. |
-| JSON / YAML over the socket | Tesselix binary format records | All of Tesselix's own messages are binary, with the validation and repair ladder. A text format may exist for authoring, compiled ahead of time. |
-| Socket in `/tmp` | `$XDG_RUNTIME_DIR/tesselix/`, mode 0700, peer checked with `SO_PEERCRED` | Per-user, not world-reachable. |
-| Any client may target an "Overlay" layer | Third-party apps get normal windows only | Powerful compositor abilities belong only to Tesselix's own processes. |
+| JSON / YAML over the socket | Kuroko binary format records | All of Kuroko's own messages are binary, with the validation and repair ladder. A text format may exist for authoring, compiled ahead of time. |
+| Socket in `/tmp` | `$XDG_RUNTIME_DIR/kuroko/`, mode 0700, peer checked with `SO_PEERCRED` | Per-user, not world-reachable. |
+| Any client may target an "Overlay" layer | Third-party apps get normal windows only | Powerful compositor abilities belong only to Kuroko's own processes. |
 | String IDs carried in events | Numeric node IDs; names stay client-side | Matches registry handles; cheap and safe to validate. |
 | Hex colors and free styles | Theme roles ("surface", "accent", "danger") | Lets the framework guarantee contrast, light/dark, reduce transparency, flash limits, and that no state is shown by color alone. |
-| Clients never use GTK or Qt | Only apps built on this framework | Any Wayland app (GTK, Qt, others) still runs on Tesselix. |
-| "X11/Wayland-style split" | Tesselix's own split | Framework apps are Wayland windows; the app-to-host protocol is Tesselix's. |
+| Clients never use GTK or Qt | Only apps built on this framework | Any Wayland app (GTK, Qt, others) still runs on Kuroko. |
+| "X11/Wayland-style split" | Kuroko's own split | Framework apps are Wayland windows; the app-to-host protocol is Kuroko's. |
 
 ## Architecture
 
@@ -33,7 +33,7 @@ Every framework window is a normal Wayland window (xdg-shell). The compositor dr
 ```
  Mode A: in-process (fastest)          Mode B: headless app (any language)
 
-┌──────────────────────────┐          ┌─────────────┐ Tesselix  ┌─────────────────────┐
+┌──────────────────────────┐          ┌─────────────┐ Kuroko  ┌─────────────────────┐
 │ App: Zig, or any language│          │ App: Python,│◀─────────▶│ UI host (Zig),      │
 │ through the C ABI        │          │ Go, JS…     │ Unix sock │ one per app         │
 │   └─ widget library      │          │ no drawing  │           │   └─ widget library │
@@ -43,13 +43,13 @@ Every framework window is a normal Wayland window (xdg-shell). The compositor dr
         ┌──────────────────────────── COMPOSITOR ─────────────────────────────┐
         │ chrome, layout, focus, scene graph                                  │
         └─────────────────────────────────────────────────────────────────────┘
-   widget tree, menus, status, content width ──Tesselix protocol──▶ compositor / context hub
+   widget tree, menus, status, content width ──Kuroko protocol──▶ compositor / context hub
 ```
 
 ### One library, two modes (suggestion)
 
 - **Widget library (Zig).** Owns the widget tree, layout, text, input, animation and rendering into the window's buffers.
-- **Mode A, in-process.** Tesselix's own apps link the library directly: no IPC per event or per frame. The library also exports a C ABI, so any language with FFI (Rust, Go through cgo, Python through cffi, C) can use it in-process too.
+- **Mode A, in-process.** Kuroko's own apps link the library directly: no IPC per event or per frame. The library also exports a C ABI, so any language with FFI (Rust, Go through cgo, Python through cffi, C) can use it in-process too.
 - **Mode B, headless.** The app sends its tree and handles events over a socket; a small UI host process, running the same library, renders it. For scripts, languages without easy FFI, and developers who want no native code at all. The app sleeps at 0% CPU until an event arrives.
 - **The same structures in both modes.** Mode A calls functions with the structures that Mode B sends as messages. One schema, one behavior, and an app can move from Mode B to Mode A when it needs speed.
 - **One UI host per app,** not one shared host: a crash takes down one app, permissions follow the app's identity, and the cost is a few MB per app. systemd socket activation with one process per connection is a simple way to spawn them.
@@ -64,7 +64,7 @@ Every framework window is a normal Wayland window (xdg-shell). The compositor dr
 
 ### Lifecycle
 
-1. **Connect** to the UI socket in `$XDG_RUNTIME_DIR/tesselix/`. The peer is checked with `SO_PEERCRED`.
+1. **Connect** to the UI socket in `$XDG_RUNTIME_DIR/kuroko/`. The peer is checked with `SO_PEERCRED`.
 2. **Hello:** protocol version, app ID and capabilities; the host replies with its version and the current theme.
 3. **Declare:** create a window and send its tree as a batch of node records.
 4. **Run:** the host renders and handles hover, press, focus, scrolling and text editing itself.
@@ -73,7 +73,7 @@ Every framework window is a normal Wayland window (xdg-shell). The compositor dr
 
 ### Messages (suggestion)
 
-- Every message is a **Tesselix record:** 16-byte header (magic, type, version, length, crc32c), with the full validation and repair ladder.
+- Every message is a **Kuroko record:** 16-byte header (magic, type, version, length, crc32c), with the full validation and repair ladder.
 - **Node IDs are u32, chosen by the app** per connection, so a whole tree can be sent without waiting for replies. The host maps them to registry handles.
 - **Strings** are length-prefixed UTF-8 inside the payload.
 - **Atomic commits:** changes are grouped and applied together at the next frame, so the user never sees a half-applied update.
@@ -159,11 +159,11 @@ accessibility settings (reduce motion, reduce transparency, contrast) above all
 - **Text:** shaping, bidi (UAX #9), Hebrew and English, and alignment by the first strong character, as in the compositor's menus.
 - **Sorted lists follow the refresh rule:** order frozen at the click, values update in place, idle-based re-sort, "N new" chip, no rendering while suspended.
 
-## Integration with Tesselix
+## Integration with Kuroko
 
 - **Chrome:** framework windows draw no title bar; the compositor draws it (server-side decorations).
 - **Menus** are exported so the compositor shows them in the title bar and in the summoned surface's menu search.
-- **Status:** progress, working and error reach the window's bottom border through the Tesselix protocol.
+- **Status:** progress, working and error reach the window's bottom border through the Kuroko protocol.
 - **Optimal size:** the library reports the content region and reading width (in characters) to the compositor, which feeds optimal size and attention tiling.
 - **Scene graph:** the library publishes its widget tree (roles, names, bounds, state). This is the "own apps via a custom protocol" source in the design concept: the richest structure, without AT-SPI.
 - **Privacy:** password fields are marked, and the recorder never records them. Text field contents are not published. The per-app blacklist applies to framework apps too.
@@ -171,7 +171,7 @@ accessibility settings (reduce motion, reduce transparency, contrast) above all
 
 ## Data service [desktop] (agreed)
 
-A Tesselix service that gives every app the same shared data: reference lists, dictionaries, calendar, system and device information. Widgets can bind to it directly, so a dropdown of countries or drives needs no app code.
+A Kuroko service that gives every app the same shared data: reference lists, dictionaries, calendar, system and device information. Widgets can bind to it directly, so a dropdown of countries or drives needs no app code.
 
 ### Binding
 
@@ -198,18 +198,18 @@ A facade over standard backends, not a reimplementation:
 ### Access
 
 - **Reference data** (countries, dictionaries, calendar): open to every app.
-- **System and device data** (drives, printers, installed apps): open to Tesselix's own apps; third-party apps need a permission, granted through the portal mechanism, since this data can fingerprint the machine.
+- **System and device data** (drives, printers, installed apps): open to Kuroko's own apps; third-party apps need a permission, granted through the portal mechanism, since this data can fingerprint the machine.
 - **Personal data** (recent files, history, working sets, salience) is never offered to third-party apps through this service.
 
 ### Protocol and SDK
 
-- **The Tesselix protocol** over a Unix socket in `$XDG_RUNTIME_DIR`, with the usual record format, validation and limits. No HTTP and no TCP port: a local port is reachable by any process and by web pages through DNS rebinding.
+- **The Kuroko protocol** over a Unix socket in `$XDG_RUNTIME_DIR`, with the usual record format, validation and limits. No HTTP and no TCP port: a local port is reachable by any process and by web pages through DNS rebinding.
 - **An SDK** per language for quick, easy use of the service: generated bindings plus convenience calls (list a source, query by prefix, subscribe to changes). First languages follow the framework bindings: Zig, C, then Go and Python.
 
 ## Security and trust (follows agreed)
 
 - Sockets in `$XDG_RUNTIME_DIR`, mode 0700, peers checked with `SO_PEERCRED`.
-- **Third-party apps get normal windows only.** Overlays, panels, top-bar slots, click capture and highlight overlays are only for Tesselix's own processes, over the compositor's Tesselix protocol.
+- **Third-party apps get normal windows only.** Overlays, panels, top-bar slots, click capture and highlight overlays are only for Kuroko's own processes, over the compositor's Kuroko protocol.
 - Using the framework grants no extra compositor permissions.
 - Hosts parse untrusted input: limits on everything, fuzz tests for every decoder, `ReleaseSafe` builds.
 - Running as root follows the Top-Level rules; a UI host runs as the same user as its app.
@@ -254,8 +254,8 @@ A facade over standard backends, not a reimplementation:
 - [ ] 2D rendering: own rasterizer, or an existing library (pixman, Cairo, a pure-Zig 2D library)?
 - [ ] Text stack: HarfBuzz + FreeType + a bidi library, or pure Zig?
 - [ ] Text layout format for authoring: needed at all, and which syntax?
-- [ ] How the compositor decides that a process is "Tesselix's own".
+- [ ] How the compositor decides that a process is "Kuroko's own".
 - [ ] What third-party apps may publish to the scene graph, and how the user controls it.
-- [ ] Packaging and sandboxing of third-party Tesselix apps (for example Flatpak with portals).
+- [ ] Packaging and sandboxing of third-party Kuroko apps (for example Flatpak with portals).
 - [ ] Which parameters an app may set, and which only the user may set (per parameter, in the schema).
 - [ ] Data service: its name, the naming scheme for sources, and which sources ship first.

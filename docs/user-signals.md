@@ -1,10 +1,10 @@
-# Tesselix — Signals for Clipboard, Sensitive Windows and Focus
+# Kuroko — Signals for Clipboard, Sensitive Windows and Focus
 
 Oct 27, 2026 · @feral keep
 
 ## Purpose
 
-Three features are still being defined: a clipboard history with trusted paste, sensitive windows, and Focus: what the user really showed interest in, listed before "recent". Their detailed design comes later. This document records the concepts and, more importantly, the **facts Tesselix must provide** so that they can be computed when they are designed. Building these facts in early is cheap; adding them to a finished compositor is not.
+Three features are still being defined: a clipboard history with trusted paste, sensitive windows, and Focus: what the user really showed interest in, listed before "recent". Their detailed design comes later. This document records the concepts and, more importantly, the **facts Kuroko must provide** so that they can be computed when they are designed. Building these facts in early is cheap; adding them to a finished compositor is not.
 
 Notation follows the Top-Level Design: **(agreed)**, **(suggestion)**, **[compositor]**, **[desktop]**. The concepts are the user's (agreed as concepts); everything about how they work is a suggestion.
 
@@ -12,12 +12,12 @@ Notation follows the Top-Level Design: **(agreed)**, **(suggestion)**, **[compos
 
 ### Clipboard history and trusted paste (agreed, concept)
 
-- Tesselix keeps a **history of copies**.
+- Kuroko keeps a **history of copies**.
 - The latest few (about 5) are one quick action away: the user can **swap the current clipboard content** with one of them before pasting.
 - **What a copy remembers:** the app it was copied from, that app's **signature** (the digest of its binary, as in the Tessel Store's authorization check) and the **object** that was open in the source window (file, URI, folder).
 - **Trust is the app and its open object together.** The same editor has one trust level with a sensitive contract open and another with a scratch note open.
-- **Trust rule:** at paste, Tesselix works out the target's trust from the target app and the object open in the target window, and allows the paste only if it is the **same trust level** as the source's.
-- **On a mismatch, Tesselix warns** that the trust levels do not match, and lets the user **raise the trust** of the target app or of the target document, then paste.
+- **Trust rule:** at paste, Kuroko works out the target's trust from the target app and the object open in the target window, and allows the paste only if it is the **same trust level** as the source's.
+- **On a mismatch, Kuroko warns** that the trust levels do not match, and lets the user **raise the trust** of the target app or of the target document, then paste.
 - **Simple, and rare.** The mechanism must not bother the user more than needed:
   - (suggestion) One small warning at the target window, drawn by the compositor, with at most three choices: **Trust this document**, **Trust this app**, **Cancel**. The first two paste right after raising the trust. Esc cancels.
   - (suggestion) A raised trust is remembered, so the same paste never warns twice.
@@ -27,7 +27,7 @@ Notation follows the Top-Level Design: **(agreed)**, **(suggestion)**, **[compos
 ### Sensitive windows (agreed, concept; still being defined)
 
 - The user can mark a **URI, a file, a folder or an app** as sensitive.
-- While a sensitive object is on screen, Tesselix can **hide its content quickly**: blur it when the pointer is not over it, blur it after a time without interaction (like a screen saver, without locking), or blur it or show **decoy content** at once on a quick gesture (both mouse buttons, a shortcut).
+- While a sensitive object is on screen, Kuroko can **hide its content quickly**: blur it when the pointer is not over it, blur it after a time without interaction (like a screen saver, without locking), or blur it or show **decoy content** at once on a quick gesture (both mouse buttons, a shortcut).
 - The goal is to prevent shoulder surfing.
 
 ### Focus, before "recent" (agreed, concept)
@@ -36,7 +36,7 @@ Notation follows the Top-Level Design: **(agreed)**, **(suggestion)**, **[compos
 - An object becomes **interesting** only through **real interaction**:
   - A video: watched for more than about 20 seconds, the count restarting when the user jumps to another point.
   - A document: a pattern of actual reading.
-- **Cycles:** when the user opens an object as part of a repeated pattern (every workday, in the first hour after the first login), Tesselix shows it as interesting when the pattern's time comes again (that first hour).
+- **Cycles:** when the user opens an object as part of a repeated pattern (every workday, in the first hour after the first login), Kuroko shows it as interesting when the pattern's time comes again (that first hour).
 
 This is the Design Concept's episodes, salience and cycle detection, shown as its own list before "recent".
 
@@ -66,7 +66,7 @@ Following the guiding rule (Architecture), the compositor provides facts and enf
 | Is this video or document in focus? | [desktop] | Recorder and memory, from episodes |
 | Cycles: in focus again when the cycle is due | [desktop] | Memory, with the temporal calendar |
 
-## Facts Tesselix must provide
+## Facts Kuroko must provide
 
 Five facts serve all three features.
 
@@ -81,7 +81,7 @@ Five facts serve all three features.
 All three features ask the same question: which file, URI or folder is in this window, and when did that change?
 
 - Sources, best first:
-  - **Tesselix apps** report it over the Tesselix protocol (document URI, and changes such as a new tab).
+  - **Kuroko apps** report it over the Kuroko protocol (document URI, and changes such as a new tab).
   - **Accessibility (AT-SPI):** browsers and office apps expose the document URL or file.
   - **The process's open files** (`/proc/<pid>/fd`) for apps that keep their file open.
   - **The window title** as a last resort, with per-app patterns.
@@ -101,7 +101,7 @@ The compositor sees every input and knows what is on screen. It reports, per win
 
 Reading patterns and video watching need more than the compositor sees:
 
-- **Reading:** the scrolled position and the part of the document in view, over time. Tesselix apps report it (the document view knows it); for others, AT-SPI where possible, else scroll events from the compositor.
+- **Reading:** the scrolled position and the part of the document in view, over time. Kuroko apps report it (the document view knows it); for others, AT-SPI where possible, else scroll events from the compositor.
 - **Media:** playing, paused, position and seeks, from MPRIS (D-Bus) and PipeWire streams [desktop]. "Watched more than 20 s since the last seek" is computed from these.
 
 ### 4. Clipboard events
@@ -118,7 +118,7 @@ The compositor owns the clipboard (txwl's data device, today accepted and ignore
 Required capabilities:
 
 - **The compositor can offer its own clipboard data,** acting as the source when the user swaps in an older copy.
-- **No bypass:** protocols that let a client read or set the clipboard without a user action (`ext-data-control`, `wlr-data-control`) are given only to Tesselix's own processes. Primary selection and drag-and-drop follow the same trust rule.
+- **No bypass:** protocols that let a client read or set the clipboard without a user action (`ext-data-control`, `wlr-data-control`) are given only to Kuroko's own processes. Primary selection and drag-and-drop follow the same trust rule.
 
 ### 5. Per-window effects in the compositor
 
@@ -143,7 +143,7 @@ The interaction facts and the debugging trace come from the same places in the c
 - txwl: a real data device (copy and paste), with the compositor able to be the source, and every copy and paste recorded with source and target.
 - The layer list: a per-layer "content mode" (as is, blurred, replaced) and one switch that covers every place a window's pixels are drawn.
 - The event publisher: per-window interaction summaries (visibility, keyboard focus, pointer, input kinds, idle) and session events, next to the scene-graph deltas.
-- The Tesselix protocol: Tesselix apps report the object they show and the part in view.
+- The Kuroko protocol: Kuroko apps report the object they show and the part in view.
 
 ## Open questions
 

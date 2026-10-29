@@ -1,5 +1,5 @@
 //! The app registry: scanning for installed graphical apps and keeping
-//! `apps.tslx` (see scan.zig).
+//! `apps.krkde` (see scan.zig).
 
 pub const elf = @import("elf.zig");
 pub const desktop_entry = @import("desktop_entry.zig");

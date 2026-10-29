@@ -105,7 +105,7 @@ try fw.interface.flush();
 
 Known work, from the 0.17 release (October 2026):
 
-- `@cImport` is removed (deprecated in 0.16). Tesselix does not use it: the
+- `@cImport` is removed (deprecated in 0.16). Kuroko does not use it: the
   simulator declares SDL3 by hand and txgl declares GL by hand. The Linux
   backend should do the same for libdrm, GBM, EGL, libinput and libseat.
 - The build system splits configuration and execution into separate

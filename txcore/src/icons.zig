@@ -1,4 +1,4 @@
-//! App icons as pixels (icons.tslx): txdesk draws each installed app's
+//! App icons as pixels (icons.krkde): txdesk draws each installed app's
 //! icon file (PNG, SVG) at the sizes the desktop uses and writes them here;
 //! the compositor reads pixels and never decodes an image format.
 //!

@@ -1,4 +1,4 @@
-//! txgl: Tesselix's GPU renderer. Draws the compositor's recorded frames
+//! txgl: Kuroko's GPU renderer. Draws the compositor's recorded frames
 //! (txwidgets draw lists) with OpenGL 3.3 core or OpenGL ES 3.0. Shared by
 //! every backend: the simulator (SDL's GL context) and the DRM/KMS backend
 //! (EGL on GBM).

@@ -11,11 +11,11 @@ const controls = @import("controls");
 const ms = std.time.ns_per_ms;
 
 const apps = [_]txcomp.AppEntry{
-    .{ .name = "Controls", .app_id = "org.tesselix.controls", .start_ms = 300, .create = controls.createControls },
-    .{ .name = "Scroll Lab", .app_id = "org.tesselix.scroll-lab", .start_ms = 1200, .create = controls.createScrollLab },
-    .{ .name = "Stopwatch", .app_id = "org.tesselix.stopwatch", .start_ms = 150, .create = controls.createStopwatch },
-    .{ .name = "Notes", .app_id = "org.tesselix.notes", .start_ms = 400, .create = controls.createNotes },
-    .{ .name = "Reader", .app_id = "org.tesselix.reader", .start_ms = 600, .create = controls.createReader },
+    .{ .name = "Controls", .app_id = "org.kuroko.controls", .start_ms = 300, .create = controls.createControls },
+    .{ .name = "Scroll Lab", .app_id = "org.kuroko.scroll-lab", .start_ms = 1200, .create = controls.createScrollLab },
+    .{ .name = "Stopwatch", .app_id = "org.kuroko.stopwatch", .start_ms = 150, .create = controls.createStopwatch },
+    .{ .name = "Notes", .app_id = "org.kuroko.notes", .start_ms = 400, .create = controls.createNotes },
+    .{ .name = "Reader", .app_id = "org.kuroko.reader", .start_ms = 600, .create = controls.createReader },
 };
 
 test "headless session: launch, tile, input, shelve, close" {
@@ -377,6 +377,71 @@ test "double click on a title bar maximizes, again restores" {
     try std.testing.expectEqual(@as(usize, 2), comp.tiles.items.len);
 }
 
+test "reorder: dragging a title bar previews the swap; the drop keeps it, Escape undoes it" {
+    const gpa = std.testing.allocator;
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+    const px = try gpa.alloc(u32, 1440 * 900);
+    defer gpa.free(px);
+    var cv = tw.Canvas.init(px, 1440, 900, 1440, 1);
+    var now: i64 = 0;
+    const a = try comp.launch(0, now);
+    const b = try comp.launch(1, now);
+    settle(comp, &now);
+    try std.testing.expect(comp.tiles.items[0].eql(a));
+
+    const fa = comp.slots[0].frame;
+    const sb = comp.slots[1].slot;
+    const ax: f32 = @floatFromInt(fa.x + fa.w - 40);
+    const ay: f32 = @floatFromInt(fa.y + 10);
+    const bx: f32 = @floatFromInt(sb.x + @divTrunc(sb.w, 2));
+    const by: f32 = @floatFromInt(sb.y + @divTrunc(sb.h, 2));
+    const step = struct {
+        fn run(cp: *txcomp.Compositor, c: *tw.Canvas, t: *i64, frames: usize) void {
+            for (0..frames) |_| {
+                t.* += 16 * ms;
+                _ = cp.tick(t.*);
+                cp.render(c, t.*);
+            }
+        }
+    }.run;
+
+    // Press on a's title bar and drag onto b's tile.
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = true, .x = ax, .y = ay } }, now);
+    comp.handleInput(.{ .pointer_motion = .{ .x = ax + 20, .y = ay } }, now);
+    comp.handleInput(.{ .pointer_motion = .{ .x = bx, .y = by } }, now);
+    // Not yet: the pointer has not rested on the tile.
+    try std.testing.expect(comp.tiles.items[0].eql(a));
+    step(comp, &cv, &now, 10);
+    // While still dragging, b has moved into a's tile, animated.
+    try std.testing.expect(comp.tiles.items[0].eql(b));
+    // Back over its own tile: the preview is undone.
+    comp.handleInput(.{ .pointer_motion = .{ .x = ax, .y = ay + 100 } }, now);
+    step(comp, &cv, &now, 10);
+    try std.testing.expect(comp.tiles.items[0].eql(a));
+    // Escape cancels the drag; nothing moves.
+    comp.handleInput(.{ .pointer_motion = .{ .x = bx, .y = by } }, now);
+    step(comp, &cv, &now, 10);
+    try std.testing.expect(comp.tiles.items[0].eql(b));
+    comp.handleInput(.{ .key = .{ .key = .escape, .pressed = true, .mods = .{} } }, now);
+    try std.testing.expect(comp.tiles.items[0].eql(a));
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = false, .x = bx, .y = by } }, now);
+    try std.testing.expect(comp.tiles.items[0].eql(a));
+    settle(comp, &now);
+
+    // A fast drop, before the preview: the windows still swap.
+    const fa2 = comp.slots[0].frame;
+    const ax2: f32 = @floatFromInt(fa2.x + fa2.w - 40);
+    const ay2: f32 = @floatFromInt(fa2.y + 10);
+    now += 500 * ms; // not a double click
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = true, .x = ax2, .y = ay2 } }, now);
+    comp.handleInput(.{ .pointer_motion = .{ .x = bx, .y = by } }, now);
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = false, .x = bx, .y = by } }, now);
+    try std.testing.expect(comp.tiles.items[0].eql(b) and comp.tiles.items[1].eql(a));
+    step(comp, &cv, &now, 20);
+    try std.testing.expectEqual(@as(usize, 2), comp.tiles.items.len);
+}
+
 test "closing leaves a shrinking picture that goes away" {
     const gpa = std.testing.allocator;
     const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
@@ -652,7 +717,7 @@ test "window trust: own apps and installed apps are trusted, others by the user'
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
     try deskApp(gpa, &out, .snapshot_begin, .installed, 0, &.{}, &.{});
-    try deskApp(gpa, &out, .app, .installed, 0, &.{ "/bin/sh", "org.tesselix.stopwatch", "Shell", "", "1.0", "" }, &.{"/bin/sh"});
+    try deskApp(gpa, &out, .app, .installed, 0, &.{ "/bin/sh", "org.kuroko.stopwatch", "Shell", "", "1.0", "" }, &.{"/bin/sh"});
     try deskApp(gpa, &out, .snapshot_end, .installed, 0, &.{}, &.{});
     feed(comp, out.items);
 
@@ -698,7 +763,7 @@ test "window trust: own apps and installed apps are trusted, others by the user'
     feed(comp, out.items);
     try std.testing.expectEqual(core.types.Trust.untrusted, comp.trustOf(tool).?.window);
 
-    // Tesselix's own apps cannot be marked.
+    // Kuroko's own apps cannot be marked.
     comp.markWindowApp(own, .untrusted);
     try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(own).?.window);
     now += 16 * ms;
@@ -711,7 +776,7 @@ const FakeInfluence = struct {
 
     fn read(ctx: *anyopaque, gpa: std.mem.Allocator, name: []const u8) ?[]u8 {
         const self: *FakeInfluence = @ptrCast(@alignCast(ctx));
-        if (!std.mem.eql(u8, name, "focus.tslx")) return null;
+        if (!std.mem.eql(u8, name, "focus.krkde")) return null;
         self.reads += 1;
         return gpa.dupe(u8, self.bytes) catch null;
     }
@@ -726,11 +791,11 @@ test "launcher: Focus, then Recent, then the other apps, each app once" {
     // Notes again (dropped: Focus holds it), Stopwatch, and an app that
     // does not exist (dropped: references only).
     const picks = [_]core.influence.Pick{
-        .{ .list = .focus, .reason = .cycle, .value = 5, .app = "org.tesselix.notes" },
-        .{ .list = .focus, .reason = .used, .value = 42, .app = "org.tesselix.reader" },
-        .{ .list = .recent, .reason = .opened, .value = 1_760_000_000, .app = "org.tesselix.notes" },
+        .{ .list = .focus, .reason = .cycle, .value = 5, .app = "org.kuroko.notes" },
+        .{ .list = .focus, .reason = .used, .value = 42, .app = "org.kuroko.reader" },
+        .{ .list = .recent, .reason = .opened, .value = 1_760_000_000, .app = "org.kuroko.notes" },
         .{ .list = .recent, .reason = .opened, .value = 1_760_000_000, .app = "/usr/bin/gone" },
-        .{ .list = .recent, .reason = .opened, .value = 1_759_999_000, .app = "org.tesselix.stopwatch" },
+        .{ .list = .recent, .reason = .opened, .value = 1_759_999_000, .app = "org.kuroko.stopwatch" },
     };
     const bytes = try core.influence.encode(gpa, &picks, 1_760_000_100, .predictor);
     defer gpa.free(bytes);
@@ -779,7 +844,7 @@ const FakeState = struct {
 
     fn read(ctx: *anyopaque, gpa: std.mem.Allocator, name: []const u8) ?[]u8 {
         const self: *FakeState = @ptrCast(@alignCast(ctx));
-        if (!std.mem.eql(u8, name, "icons.tslx")) return null;
+        if (!std.mem.eql(u8, name, "icons.krkde")) return null;
         return gpa.dupe(u8, self.icons) catch null;
     }
 };

@@ -1,15 +1,15 @@
 #!/bin/sh
 # Runs a third-party app, Google Chrome, on the VM's screen the same way
-# run.sh runs Tesselix: inside cage, as a Wayland client. It checks that the
-# VM can run a heavy GPU app before Tesselix hosts such apps itself (txsim is
-# not a Wayland server yet, so Chrome cannot open inside Tesselix).
+# run.sh runs Kuroko: inside cage, as a Wayland client. It checks that the
+# VM can run a heavy GPU app before Kuroko hosts such apps itself (txsim is
+# not a Wayland server yet, so Chrome cannot open inside Kuroko).
 #
 #   sh browser.sh --install   once: Chrome from Google's apt repository
 #                             (arm64 builds; apt, never snap). Updates come
 #                             with  sudo apt upgrade
 #   sh browser.sh             Chrome full screen; any options pass through.
-#                             With Tesselix running (run.sh), it joins that
-#                             cage and shows over Tesselix (works over SSH)
+#                             With Kuroko running (run.sh), it joins that
+#                             cage and shows over Kuroko (works over SSH)
 #   sh browser.sh https://example.org
 #
 #   TX_GPU=off sh browser.sh  draw on the CPU, if the GPU path shows nothing
@@ -21,9 +21,9 @@
 #
 # Quit: Ctrl+Shift+Q, or from SSH  pkill -f 'opt/google/chrom[e]/chrome'
 #       (cage exits with it when browser.sh started cage).
-# Log: ~/.cache/tesselix/browser.log
+# Log: ~/.cache/kuroko/browser.log
 set -e
-cache="$HOME/.cache/tesselix"
+cache="$HOME/.cache/kuroko"
 mkdir -p "$cache"
 
 if [ "$1" = --install ]; then
@@ -57,8 +57,8 @@ if [ "$TX_GPU" = off ]; then
 fi
 log="$cache/browser.log"
 
-# Tesselix already on screen (run.sh): join its cage. Chrome shows full
-# screen over Tesselix, and closing it brings Tesselix back. Works over SSH.
+# Kuroko already on screen (run.sh): join its cage. Chrome shows full
+# screen over Kuroko, and closing it brings Kuroko back. Works over SSH.
 if pgrep -x cage >/dev/null && [ -S "$XDG_RUNTIME_DIR/wayland-0" ]; then
     echo "== $(date '+%F %T')  joining the running cage  args: $*" >"$log"
     WAYLAND_DISPLAY=wayland-0 nohup "$browser" "$@" >>"$log" 2>&1 &

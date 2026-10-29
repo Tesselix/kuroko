@@ -1,10 +1,10 @@
-# Tesselix — Top-Level Design
+# Kuroko — Top-Level Design
 
 Oct 9, 2026 · @feral keep
 
 ## Purpose and notation
 
-This document records the top-level design of Tesselix: how the system is split, the binary format, the language and memory-safety model, and the main parts of the desktop the user sees. It builds on the design concept and on the human-factors reference. Details of individual apps are left for when they are built.
+This document records the top-level design of Kuroko: how the system is split, the binary format, the language and memory-safety model, and the main parts of the desktop the user sees. It builds on the design concept and on the human-factors reference. Details of individual apps are left for when they are built.
 
 Notation:
 - **(agreed)**: confirmed in discussion.
@@ -16,17 +16,17 @@ Notation:
 
 ## Foundations (agreed)
 
-- **Tesselix** (formerly EZRA) is the whole system: compositor, desktop services and the apps shipped with it. The name comes from tessellation: windows tile the screen with no gaps and no overlaps.
+- **Kuroko** (formerly EZRA, then Tesselix) is the whole system: compositor, desktop services and the apps shipped with it. The name is Japanese: *kuroko* (黒子) are the black-clad stagehands of kabuki and bunraku who move the scenery and help the actors in plain sight, unseen by agreement. The system does the same: it prepares what the user needs next and stays out of the way.
 - **Wayland only.** No X11 and no Xwayland. Apps that run only on X11 are not supported.
 - **Latest libraries and Wayland protocols.** Versions are pinned per release and upgraded deliberately, not tracked automatically.
 - **Latest solid versions** (agreed, 2026-10-14): a version line is used once it has been a stable release for at least 3 months, at its newest patch. Rule and current versions: `docs/dependencies.md`.
-- **Language: Zig** for the compositor, the desktop services and Tesselix's own apps, so one shared Tesselix protocol library serves all of them (and gtty).
+- **Language: Zig** for the compositor, the desktop services and Kuroko's own apps, so one shared Kuroko protocol library serves all of them (and gtty).
 
 ## Architecture
 
 ### Guiding rule
 
-The compositor owns everything the user can see or touch and everything with a 0.1 s or per-frame deadline. Everything that thinks, learns or stores runs outside it, at lower priority, and talks to it only through Tesselix messages. If every desktop service crashes or hangs, the compositor keeps working as a plain, non-predictive desktop. The compositor is the most reliable part of the system.
+The compositor owns everything the user can see or touch and everything with a 0.1 s or per-frame deadline. Everything that thinks, learns or stores runs outside it, at lower priority, and talks to it only through Kuroko messages. If every desktop service crashes or hangs, the compositor keeps working as a plain, non-predictive desktop. The compositor is the most reliable part of the system.
 
 ### Components
 
@@ -39,7 +39,7 @@ The compositor owns everything the user can see or touch and everything with a 0
 │ Action validator  ◀── structured actions                                   │
 │ Event publisher   ──▶ scene-graph deltas, input summaries                   │
 └───────────────┬────────────────────────────────────────────▲───────────────┘
-                │ Tesselix messages (Unix socket)             │
+                │ Kuroko messages (Unix socket)             │
 ┌───────────────▼──────────── DESKTOP SERVICES ───────────────┴───────────────┐
 │ Context hub ─ AT-SPI collector, system-state sampler, temporal calendar     │
 │ Recorder    ─ raw ring buffer (RAM) → episodes                              │
@@ -68,7 +68,7 @@ The compositor owns everything the user can see or touch and everything with a 0
 | Agent | [desktop] | Predictors do most of the work; the small local model interprets them and emits actions and rankings | Seconds, low CPU priority |
 | Gateway | [desktop] | Builds the summary, asks the user for approval, calls the remote model; the only component allowed to reach the network | On demand |
 | Sysadmin | [desktop] | Cleanup ranking, health, throttle and freeze requests, proposals | Background |
-| Shell apps | [desktop] | Separate processes shipped with Tesselix (see Shell apps) | Normal app |
+| Shell apps | [desktop] | Separate processes shipped with Kuroko (see Shell apps) | Normal app |
 
 ### Rules of the split
 
@@ -76,9 +76,9 @@ The compositor owns everything the user can see or touch and everything with a 0
 - **Back-pressure goes one way.** The compositor never waits on a desktop service. Slow subscribers miss deltas and resync from a full snapshot.
 - **The compositor detects client death itself,** from the client's socket closing. Its memory safety never depends on another process.
 - **Process isolation follows trust.** The recorder and memory hold sensitive data and have no network. The gateway has network and sees only summaries. Privileged actions go through polkit, never through a background root service.
-- **Shell apps are shipped with Tesselix but are not inside the compositor.** A hung panel can't freeze the screen.
-- **Powerful compositor abilities** (drawing over other windows, capturing their clicks, attention signals) are granted only to Tesselix's own processes over the Tesselix protocol, never to arbitrary apps.
-- Wayland clients talk the Wayland protocol. The Tesselix binary format is for Tesselix's own messages and stored data only.
+- **Shell apps are shipped with Kuroko but are not inside the compositor.** A hung panel can't freeze the screen.
+- **Powerful compositor abilities** (drawing over other windows, capturing their clicks, attention signals) are granted only to Kuroko's own processes over the Kuroko protocol, never to arbitrary apps.
+- Wayland clients talk the Wayland protocol. The Kuroko binary format is for Kuroko's own messages and stored data only.
 - **D-Bus** (AT-SPI, NetworkManager, StatusNotifierItem, menus) is used through sd-bus or a Zig D-Bus library, not GLib.
 
 ### Influence files (agreed)
@@ -88,14 +88,14 @@ Files are the interface between prediction and the desktop. The desktop reads th
 - **Fact files: what happened.** Written only by the recorder: which app was opened, when, with which file, for how long. The AI reads them and **never edits them**, so a wrong conclusion can't rewrite its own evidence.
 - **Influence files: what the desktop should offer.** Predicted apps for the launcher, predicted contexts for the switcher, later group suggestions and layout hints. Written by the predictors now, by the AI later.
 - **References, not free content.** An entry can only point to things that exist: an installed app, a file in the fact history, a known group. The reader resolves each one and drops what it can't, so the AI can rank and choose but can't inject a command or a path.
-- **Fixed schema in the Tesselix binary format,** with the same validation ladder, so a broken or half-written file is detected and skipped.
+- **Fixed schema in the Kuroko binary format,** with the same validation ladder, so a broken or half-written file is detected and skipped.
 - **One file per writer.** The reader uses the AI's file when it is valid and fresh, and falls back to the predictors' file otherwise. Turning the AI off, or the AI failing, brings back the simple predictions.
 - **Each entry carries its source and a reason code** ("same time yesterday", "AI"), so the user can see why it is offered, and the AI's suggestions can be compared with the simple ones.
 - **Atomic writes** (write a temporary file, then rename). Readers are notified and read the file when they next need it.
 - **Read at the moment of use** and frozen while visible, so an update never changes what the user is looking at.
 - **Sensitive like the history:** influence files contain file names, so they are encrypted at rest with it, or kept in memory and rebuilt after login.
 
-## Tesselix binary format (agreed)
+## Kuroko binary format (agreed)
 
 All internal communication and metadata are stored in binary. Every structure starts with a validation word so a reader can check it, repair it when possible, log the repair and continue.
 
@@ -132,7 +132,7 @@ Nested structures carry only the 8-byte header. The length lets a reader skip wh
 - **Fixed-width fields only** (u8–u64, i8–i64, f32, f64). No native `int`, `long`, `usize` or pointers. 32-bit and 64-bit machines then produce identical bytes.
 - **Canonical byte order is little-endian.** Every writer writes little-endian; a big-endian reader swaps on load.
 - **Explicit padding** in every struct.
-- **References are IDs or offsets,** never memory addresses. Compositor object handles (index + generation) can serve directly as Tesselix IDs.
+- **References are IDs or offsets,** never memory addresses. Compositor object handles (index + generation) can serve directly as Kuroko IDs.
 - In Zig, structures are `extern struct`, and `comptime` generates the validation, byte-swap and repair code for every type from its single definition.
 
 ### Validation and repair ladder
@@ -158,12 +158,12 @@ Repairs are logged with their source (socket peer, or file and offset) and count
 - **Ship in `ReleaseSafe` mode.** Bounds and overflow checks stay on.
 - **Pin one Zig version** for the whole project and upgrade deliberately. Zig is pre-1.0 and its standard library changes between releases.
 - **Keep notes on the current std APIs in the repo,** so AI-written code targets the pinned version rather than older APIs from its training.
-- **Test with Zig's debug allocator** (leaks, double free, use-after-free) and **fuzz** the Wayland protocol handlers and the Tesselix decoder, since both parse untrusted input.
+- **Test with Zig's debug allocator** (leaks, double free, use-after-free) and **fuzz** the Wayland protocol handlers and the Kuroko decoder, since both parse untrusted input.
 - Precedent: River is a Wayland compositor written in Zig on wlroots, using the `zig-wayland` and `zig-wlroots` bindings.
 
 ### Foundation: our own compositor, no wlroots (agreed, 2026-10-27)
 
-Tesselix needs full control of every part of the window system, so that an advanced window manager, the debugger (`docs/debugging.md`) and the trust and sensitivity features (`docs/user-signals.md`) can be built without working around someone else's object model.
+Kuroko needs full control of every part of the window system, so that an advanced window manager, the debugger (`docs/debugging.md`) and the trust and sensitivity features (`docs/user-signals.md`) can be built without working around someone else's object model.
 
 - **Own Wayland server:** `txwl`, pure Zig, no libwayland.
 - **Own GPU renderer:** `txgl`, OpenGL ES 3.0 (OpenGL 3.3 core on the Mac). The compositor core records a draw list; the renderer turns it into quads.
@@ -182,7 +182,7 @@ Tesselix needs full control of every part of the window system, so that an advan
 Every object type with a lifetime problem goes through one mechanism. Plain allocation is used for everything else.
 
 - **Registry.** One per object type (surfaces, windows, outputs, input devices, popups, buffers). Each slot holds the object, a generation number, a state (live or dead) and a count of active guards.
-- **Handle.** Index + generation, 8 bytes. The only thing stored long-term: in other objects, in focus state, in the scene graph, and as the Tesselix ID.
+- **Handle.** Index + generation, 8 bytes. The only thing stored long-term: in other objects, in focus state, in the scene graph, and as the Kuroko ID.
 - **Guard.** Code that needs the real object acquires a guard and releases it with `defer`:
 
 ```zig
@@ -218,7 +218,7 @@ The layout executor decides every window's size and position. Apps can ask (maxi
 - **A tile is as wide as its window needs:** the optimal width divided by the fill. Leftover width goes to the tiles of windows whose content can use it (growable: documents and other reflowable content); if none can, it is shared equally.
 - **Too little room:** a window with fixed content keeps its tile and a growable window reflows into the rest; between two of the same kind, the focused one keeps its size.
 - **The user adjusts, within the rules.** Dragging the shared border between two tiles, or between the two rows, resizes both tiles and the windows in them. The border is drawn as a line with a grip; the whole gap between the two windows is the grab area. The result is learned as a preference for that app or context.
-- **Swapping:** dragging a window's title bar onto another window's tile swaps the two windows. While dragging, every tile is outlined and the target is highlighted.
+- **Swapping:** dragging a window's title bar onto another window's tile swaps the two windows. While dragging, every tile is outlined, the dragged window follows the pointer as a thumbnail, and a placeholder in its tile shows where it will land. When the pointer rests on another tile, that window moves aside into the dragged window's tile (animated), so the result shows before the drop; back over its own tile, the preview is undone. Escape cancels the drag.
 - **The user's choice wins.** If the user opens several apps next to one that needs the full screen, the layout serves that choice rather than preventing it.
 - **Switcher.** Super+Tab scales the current view down and shows all other open windows, groups and predicted contexts around it (see Switcher).
 
@@ -354,7 +354,7 @@ Opened with **Super+Tab**. It replaces a separate "show all windows" mode. (agre
 - **Bottom: predicted contexts,** a single row, from the agent's working sets.
 - **Groups are made automatically.** When the user switches away from a view holding more than one window, that view becomes a group, and it appears on the right the next time.
 - **Click** a window on the left: it replaces what is displayed. **Drag** it onto the current view: it is added to the view.
-- **History and prediction stay apart:** the right side is what the user did, the bottom is what Tesselix expects.
+- **History and prediction stay apart:** the right side is what the user did, the bottom is what Kuroko expects.
 
 ### Filter (agreed)
 
@@ -377,7 +377,7 @@ Opened with **Super+Tab**. It replaces a separate "show all windows" mode. (agre
 - (suggestion) **Clicking a predicted context** arranges its windows, launching missing apps with placeholders. About 4 contexts at most.
 - (suggestion) **Search details:** a faint "type to filter" hint before typing; the best match preselected, Enter opens it, arrows move; Escape first clears the search, then closes the switcher; "+N more" at the end of the strip; a short "no match" label in a ghost area; typed keys matched in both Hebrew and English layouts.
 - (suggestion) **Timing:** the shrink starts within 0.1 s of the key press and animates in 150–250 ms, interruptible; ghosts fade, never flicker.
-- (suggestion) **At login,** the switcher opens on its own: no windows on the left yet, the groups from the last session on the right, predicted contexts at the bottom. Clicking a group restores it, launching its apps with their files and placeholders, in its saved layout. Escape or launching anything dismisses it; a setting turns it off. Tesselix restores apps, files and layout; state inside an app (browser tabs, cursor position) is the app's own.
+- (suggestion) **At login,** the switcher opens on its own: no windows on the left yet, the groups from the last session on the right, predicted contexts at the bottom. Clicking a group restores it, launching its apps with their files and placeholders, in its saved layout. Escape or launching anything dismisses it; a setting turns it off. Kuroko restores apps, files and layout; state inside an app (browser tabs, cursor position) is the app's own.
 - (suggestion) **Other ways to open it:** a gesture, the summoned surface, or pushing the pointer past a screen edge with a short dwell.
 
 ## Window chrome [compositor]
@@ -458,12 +458,12 @@ All borders are 1–3 px. The bottom border carries the window's status and work
 
 - Red carries the meaning; the dash is there for users who can't see red.
 - Motion is slow and smooth, never blinking (epilepsy rule).
-- Sources of progress: launch estimates, `com.canonical.Unity.LauncherEntry` progress over D-Bus (used by many apps for downloads and copies), and Tesselix's own apps through the Tesselix protocol.
+- Sources of progress: launch estimates, `com.canonical.Unity.LauncherEntry` progress over D-Bus (used by many apps for downloads and copies), and Kuroko's own apps through the Kuroko protocol.
 
 ### Top frame: elevated privilege (agreed)
 
 - **A red top frame plus a shield icon** means the window runs with elevated privilege.
-- **Shown only for facts the compositor checked itself:** the client's user ID from the Wayland socket (`SO_PEERCRED`), or, for a terminal, a child process whose effective user ID is 0 in its process tree. gtty may add detail through the Tesselix protocol but never replaces the compositor's check.
+- **Shown only for facts the compositor checked itself:** the client's user ID from the Wayland socket (`SO_PEERCRED`), or, for a terminal, a child process whose effective user ID is 0 in its process tree. gtty may add detail through the Kuroko protocol but never replaces the compositor's check.
 - An app can't fake or hide this frame, because the compositor draws it.
 
 ## Launching apps (agreed)
@@ -513,14 +513,14 @@ Groups of up to 4, each with a main control and details one click away:
 | Focus and power | Do not disturb · power profile · battery |
 | Assistant | Pause learning |
 
-- **"Pause learning"** is one click from anywhere, with an indicator in the top bar showing whether Tesselix is learning.
+- **"Pause learning"** is one click from anywhere, with an indicator in the top bar showing whether Kuroko is learning.
 - **Mic and camera in-use indicators** are drawn by the compositor so no app can hide them, each with its own icon, not just a colored dot.
 - Opens on the screen where it was clicked or summoned.
 
 ### Indicators
 
-- **Tesselix's own indicators** (Wi-Fi, battery, sound, mic, learning) are built in, in fixed positions.
-- **Third-party indicators** register through **StatusNotifierItem** (D-Bus) and appear to the left of Tesselix's. (agreed: no legacy X11 tray)
+- **Kuroko's own indicators** (Wi-Fi, battery, sound, mic, learning) are built in, in fixed positions.
+- **Third-party indicators** register through **StatusNotifierItem** (D-Bus) and appear to the left of Kuroko's. (agreed: no legacy X11 tray)
 - (suggestion) Up to about 4 third-party indicators are visible; the rest go behind a "»" overflow, and the user chooses which stay visible.
 
 ### Bringing it to the pointer (agreed)
@@ -540,7 +540,7 @@ The **lock screen** covers a running session. The **greeter** is the login scree
 
 ### Summary structure (suggestion)
 
-One Tesselix structure serves both screens. It has **no string fields at all**, so a bug or a careless service can't leak content onto the screen.
+One Kuroko structure serves both screens. It has **no string fields at all**, so a bug or a careless service can't leak content onto the screen.
 
 ```
 user summary
@@ -553,7 +553,7 @@ user summary
 
 ### Where the data comes from (suggestion)
 
-- **Lock screen:** the session is still running. Desktop services send the summary over the Tesselix socket; "urgent" comes from the agent and salience, countdowns from the temporal layer. The compositor only renders it.
+- **Lock screen:** the session is still running. Desktop services send the summary over the Kuroko socket; "urgent" comes from the agent and salience, countdowns from the temporal layer. The compositor only renders it.
 - **Greeter:** the user's memory is encrypted and the session isn't running. The user's session writes the summary at logout and on lock into a small per-user file the greeter may read. It is a **snapshot**, so the greeter shows its age ("as of yesterday 18:40").
 - **Opt-in per user, and per category.** Anyone at the machine can select a user and see the counts, so showing them is the user's choice.
 
@@ -562,14 +562,14 @@ user summary
 - **The compositor draws, services supply.** A missing or crashed service means an empty card, never a broken lock.
 - **Information only.** No actions, launches or replies from the lock screen or greeter, so neither becomes a way around the lock.
 - **Lock screen** uses `ext-session-lock-v1` inside the compositor.
-- **Greeter** uses greetd as the login backend (PAM), runs inside Tesselix as the greeter's own system user, and reuses the lock screen's UI: the lock screen plus user and session choice. It accepts only system-sourced summaries and the per-user snapshot files.
+- **Greeter** uses greetd as the login backend (PAM), runs inside Kuroko as the greeter's own system user, and reuses the lock screen's UI: the lock screen plus user and session choice. It accepts only system-sourced summaries and the per-user snapshot files.
 - Password fields on both are never recorded.
 
 ## Shell apps [desktop]
 
-Shipped with Tesselix, each in its own process. **Build the UI, reuse the standard backends,** so Tesselix stays compatible with every other app and tool.
+Shipped with Kuroko, each in its own process. **Build the UI, reuse the standard backends,** so Kuroko stays compatible with every other app and tool.
 
-| App | Backend | What Tesselix adds |
+| App | Backend | What Kuroko adds |
 | --- | --- | --- |
 | Processes | `/proc`, cgroups, process connector | See Process window |
 | Trash | freedesktop Trash spec | Ordered by salience; snapshot before emptying |
@@ -634,9 +634,9 @@ Today's process managers assume few processes, offer no real search and re-sort 
 - **Actions go through `pidfd`,** never the PID number, so a reused PID can't be hit by mistake.
 - **Graduated actions:** freeze (cgroup freezer, reversible) → lower priority → stop (SIGTERM) → force kill (SIGKILL, confirmed). Root processes go through polkit.
 
-## Refresh rule for Tesselix's own windows (agreed)
+## Refresh rule for Kuroko's own windows (agreed)
 
-Applies only to windows Tesselix builds; other apps are not classified for now. Each app runs its own idle timer from its own input events; visibility comes from standard Wayland (frame callbacks, xdg-shell "suspended").
+Applies only to windows Kuroko builds; other apps are not classified for now. Each app runs its own idle timer from its own input events; visibility comes from standard Wayland (frame callbacks, xdg-shell "suspended").
 
 The deciding question is whether an update moves something the user is looking at:
 
@@ -651,15 +651,15 @@ The deciding question is whether an update moves something the user is looking a
 
 ### Order of work (agreed)
 
-**Compositor → desktop → greeter.** The compositor comes first because everything else runs inside it, including the greeter. A very basic greeter exists from the beginning so Tesselix can be started as a normal session; the full greeter with the summary card comes last, built on the lock screen.
+**Compositor → desktop → greeter.** The compositor comes first because everything else runs inside it, including the greeter. A very basic greeter exists from the beginning so Kuroko can be started as a normal session; the full greeter with the summary card comes last, built on the lock screen.
 
-Until then Tesselix is started nested from an existing desktop, from a TTY, or as a session in the existing display manager (a `.desktop` file in `/usr/share/wayland-sessions/`).
+Until then Kuroko is started nested from an existing desktop, from a TTY, or as a session in the existing display manager (a `.desktop` file in `/usr/share/wayland-sessions/`).
 
 ### Development environment
 
 - **macOS for the platform-independent parts.** Zig runs natively on the Mac, but a Wayland compositor does not: it needs Linux kernel interfaces (DRM/KMS, libinput, dmabuf).
 - **A Linux VM on the Mac for the compositor** (agreed). The compositor runs **nested**, as a window inside the VM's own Wayland session, so it can crash and restart without losing the desktop. (suggestion) UTM for a full desktop VM, or Lima for a light command-line one.
-- (suggestion) **Fedora or Arch in the VM rather than Ubuntu.** Tesselix uses the latest libraries and Wayland protocols, and Ubuntu lags on wayland-protocols.
+- (suggestion) **Fedora or Arch in the VM rather than Ubuntu.** Kuroko uses the latest libraries and Wayland protocols, and Ubuntu lags on wayland-protocols.
 - (suggestion) **A headless backend for automated tests** (no screen, frames read back), so compositor tests run in the VM.
 - **Bare-metal Linux later** (agreed), for what a VM can't show truthfully: direct DRM/KMS, real GPU buffers and fences, monitor hotplug, multiple physical screens, high refresh rates and fast mice.
 
@@ -673,7 +673,7 @@ Until then Tesselix is started nested from an existing desktop, from a TTY, or a
 
 Keep the backend layer (DRM/KMS, input, the GL context) thin, and put the logic in pure Zig that builds and tests on any OS:
 
-- The Tesselix binary format: comptime validation, byte-swap and repair.
+- The Kuroko binary format: comptime validation, byte-swap and repair.
 - The object registry: handles, guards, generations, tested with the debug allocator.
 - The layout executor as pure logic: windows, content widths, focus and screen geometry in; rectangles and scale levels out.
 - Menu and text layout: dropdown widths, bidi alignment, "»" overflow, expanding buttons.
@@ -683,10 +683,10 @@ A small debug viewer on the Mac (SDL or raylib) can draw the layout executor's o
 
 ### Steps (suggestion)
 
-1. **Foundations on the Mac:** Tesselix binary format and the object registry, with unit tests.
+1. **Foundations on the Mac:** Kuroko binary format and the object registry, with unit tests.
 2. **Minimal nested compositor in the VM:** one output, xdg-shell windows, keyboard and pointer, focus, clean handling of client death, timing instrumentation.
 3. **Window chrome and layout:** title bars and buttons, status border, launch placeholder, attention tiling and scaling.
-4. **Compositor ↔ desktop services:** Tesselix socket, event publisher with scene-graph deltas, action validator, a stub service on the other end.
+4. **Compositor ↔ desktop services:** Kuroko socket, event publisher with scene-graph deltas, action validator, a stub service on the other end.
 5. **First end-to-end loop:** scene graph → episode log → ranked summoned launcher.
 6. **Bare metal:** run from a TTY on DRM/KMS, multiple screens, session file for the display manager.
 7. **Lock screen, then the full greeter** on top of it, with greetd as the backend.
@@ -710,6 +710,6 @@ Steps 1–5 fit entirely on the Mac and the VM.
 - [ ] Which summary categories are shown by default on the lock screen and the greeter.
 - [x] Foundation: our own compositor, no wlroots (see "Foundation", 2026-10-27).
 - [ ] Message transport: one hub, or the compositor publishing directly to each subscriber?
-- [ ] Tesselix type ID registry: a single 16-bit space, or split by component?
-- [ ] Schema language for Tesselix structures and code generation.
+- [ ] Kuroko type ID registry: a single 16-bit space, or split by component?
+- [ ] Schema language for Kuroko structures and code generation.
 - [ ] Stored files: per-file header with creation info and encryption parameters.

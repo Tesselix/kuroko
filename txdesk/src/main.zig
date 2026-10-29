@@ -1,24 +1,24 @@
 //! txdesk: the first desktop service, a stub of the context hub.
 //!
 //! It connects to the compositor's socket, reads scene-graph deltas
-//! (Tesselix records, with the validation and repair ladder), keeps its own
+//! (Kuroko records, with the validation and repair ladder), keeps its own
 //! copy of the scene, and prints it as terse text: the form the agent will
 //! reason over (Design Concept, "Text, not pixels").
 //!
 //! It runs as a separate process. If it crashes or hangs, the compositor
 //! carries on; if the compositor restarts, txdesk reconnects.
 //!
-//! It also keeps the app registry (apps/): it loads apps.tslx, sends the
+//! It also keeps the app registry (apps/): it loads apps.krkde, sends the
 //! known apps to the compositor, scans for changes (at start, then every
 //! five minutes; apt updates every six hours), saves, and sends what
 //! changed. By hand:
 //!   txdesk apps scan [--x11] [--verbose] [--file PATH]
-//!                         scan for installed graphical apps, update apps.tslx
+//!                         scan for installed graphical apps, update apps.krkde
 //!   txdesk apps list [--skipped] [--file PATH]
 //!                         print the registry
-//! The file is $XDG_STATE_HOME/tesselix/apps.tslx (~/.local/state/...).
+//! The file is $XDG_STATE_HOME/kuroko/apps.krkde (~/.local/state/...).
 //!
-//! And the user's trust marks (trust.zig): trust.tslx next to apps.tslx,
+//! And the user's trust marks (trust.zig): trust.krkde next to apps.krkde,
 //! sent to the compositor, which decides each window's trust. Any
 //! installed app is trusted unless marked otherwise (provisional). By hand:
 //!   txdesk trust list
@@ -29,10 +29,10 @@
 //! A running txdesk notices the change and tells the compositor.
 //!
 //! And Focus and Recent (focus.zig): it records each window's use from the
-//! scene (facts.tslx) and writes the launcher's lists (focus.tslx, an
+//! scene (facts.krkde) and writes the launcher's lists (focus.krkde, an
 //! influence file), then tells the compositor to read them.
 //!
-//! And the apps' icons as pixels (icons.zig, icons.tslx), drawn from their
+//! And the apps' icons as pixels (icons.zig, icons.krkde), drawn from their
 //! PNG or SVG files after each scan, so the compositor decodes nothing.
 
 const std = @import("std");
@@ -197,13 +197,13 @@ pub fn main(init: std.process.Init) !void {
         .home = init.environ_map.get("HOME") orelse "/",
         .store = .init(gpa),
         .link = .init(gpa),
-        .trust = .init(gpa, try stateFile(init, "trust.tslx")),
+        .trust = .init(gpa, try stateFile(init, "trust.krkde")),
         .sigs = .init(gpa),
         .facts = .init(gpa),
-        .facts_file = try stateFile(init, "facts.tslx"),
-        .focus_file = try stateFile(init, "focus.tslx"),
+        .facts_file = try stateFile(init, "facts.krkde"),
+        .focus_file = try stateFile(init, "focus.krkde"),
         .icons = .init(gpa),
-        .icons_file = try stateFile(init, "icons.tslx"),
+        .icons_file = try stateFile(init, "icons.krkde"),
     };
     defer desk.deinit();
     desk.load();
@@ -624,15 +624,15 @@ fn localOffset(now_s: i64) i64 {
 }
 
 fn registryFile(init: std.process.Init) ![]const u8 {
-    return stateFile(init, "apps.tslx");
+    return stateFile(init, "apps.krkde");
 }
 
-/// A file in $XDG_STATE_HOME/tesselix (~/.local/state/tesselix).
+/// A file in $XDG_STATE_HOME/kuroko (~/.local/state/kuroko).
 fn stateFile(init: std.process.Init, name: []const u8) ![]const u8 {
     const arena = init.arena.allocator();
-    if (init.environ_map.get("XDG_STATE_HOME")) |st| return std.fs.path.join(arena, &.{ st, "tesselix", name });
+    if (init.environ_map.get("XDG_STATE_HOME")) |st| return std.fs.path.join(arena, &.{ st, "kuroko", name });
     const home = init.environ_map.get("HOME") orelse return error.NoHome;
-    return std.fs.path.join(arena, &.{ home, ".local/state/tesselix", name });
+    return std.fs.path.join(arena, &.{ home, ".local/state/kuroko", name });
 }
 
 // --------------------------------------------------------------- trust
@@ -654,7 +654,7 @@ fn trustCommand(init: std.process.Init, args: []const [:0]const u8) !void {
         \\
     ;
 
-    var file = trust.File.init(gpa, try stateFile(init, "trust.tslx"));
+    var file = trust.File.init(gpa, try stateFile(init, "trust.krkde"));
     defer file.deinit();
     var log: core.format.RepairLog = .{};
     file.load(gpa, io, &log) catch |err| {

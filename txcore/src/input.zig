@@ -56,7 +56,7 @@ pub const WheelSource = enum(u8) {
 
 /// Wheel motion. Positive `dy` scrolls forward (toward the end of the
 /// document); the backend has already removed any direction flip done by
-/// the host system, and the compositor applies Tesselix's own default.
+/// the host system, and the compositor applies Kuroko's own default.
 pub const Wheel = struct {
     dx: f32 = 0,
     dy: f32 = 0,

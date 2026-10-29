@@ -100,7 +100,7 @@ fn card(win: *Window, parent: NodeId, title: []const u8) !NodeId {
 pub fn createControls(gpa: std.mem.Allocator) !tw.Surface {
     const win = try Window.create(gpa, .{
         .title = "Controls",
-        .app_id = "org.tesselix.controls",
+        .app_id = "org.kuroko.controls",
         // Measured from the widgets, so the window is only as wide as needed.
         .optimal = .{ .w = 0, .h = 0 },
     });
@@ -262,7 +262,7 @@ pub fn createScrollLab(gpa: std.mem.Allocator) !tw.Surface {
 
     const win = try Window.create(gpa, .{
         .title = "Scroll Lab",
-        .app_id = "org.tesselix.scroll-lab",
+        .app_id = "org.kuroko.scroll-lab",
         .optimal = .{ .w = 720, .h = 1400 },
         .menu = &.{ "File", "View", "Go", "Help" },
     });
@@ -329,11 +329,11 @@ fn createDoc(gpa: std.mem.Allocator, title: []const u8, app_id: []const u8, seed
 }
 
 pub fn createNotes(gpa: std.mem.Allocator) !tw.Surface {
-    return createDoc(gpa, "Notes", "org.tesselix.notes", 0x0A11CE, &.{ "Monday", "Ideas", "To check", "Meeting", "Later", "Open questions" }, 24);
+    return createDoc(gpa, "Notes", "org.kuroko.notes", 0x0A11CE, &.{ "Monday", "Ideas", "To check", "Meeting", "Later", "Open questions" }, 24);
 }
 
 pub fn createReader(gpa: std.mem.Allocator) !tw.Surface {
-    return createDoc(gpa, "Reader", "org.tesselix.reader", 0xB00C, &.{ "Chapter one", "The harbor", "Night shift", "Letters", "The long road", "Return" }, 30);
+    return createDoc(gpa, "Reader", "org.kuroko.reader", 0xB00C, &.{ "Chapter one", "The harbor", "Night shift", "Letters", "The long road", "Return" }, 30);
 }
 
 // =============================================================== Stopwatch
@@ -380,7 +380,7 @@ const Stopwatch = struct {
 pub fn createStopwatch(gpa: std.mem.Allocator) !tw.Surface {
     const win = try Window.create(gpa, .{
         .title = "Stopwatch",
-        .app_id = "org.tesselix.stopwatch",
+        .app_id = "org.kuroko.stopwatch",
         .optimal = .{ .w = 360, .h = 130 },
         .menu = &.{"Help"},
     });

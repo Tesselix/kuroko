@@ -1,8 +1,8 @@
 //! txsim: the simulator backend. Runs the real compositor core in one SDL3
 //! window on macOS (or any desktop), so the compositor, desktop and widgets
-//! can be developed before Tesselix's own Linux (DRM/KMS) backend exists.
+//! can be developed before Kuroko's own Linux (DRM/KMS) backend exists.
 //!
-//! The backend stays thin: it only translates SDL events into Tesselix
+//! The backend stays thin: it only translates SDL events into Kuroko
 //! input events and shows the canvas the core draws. All behavior lives in
 //! txcomp and txwidgets, so it is the same code that will run on Linux.
 //!
@@ -47,11 +47,11 @@ const SIGINT: c_int = 2;
 const SIGTERM: c_int = 15;
 
 const apps = [_]txcomp.AppEntry{
-    .{ .name = "Controls", .app_id = "org.tesselix.controls", .start_ms = 300, .create = controls.createControls },
-    .{ .name = "Scroll Lab", .app_id = "org.tesselix.scroll-lab", .start_ms = 1200, .create = controls.createScrollLab },
-    .{ .name = "Stopwatch", .app_id = "org.tesselix.stopwatch", .start_ms = 150, .create = controls.createStopwatch },
-    .{ .name = "Notes", .app_id = "org.tesselix.notes", .start_ms = 400, .create = controls.createNotes },
-    .{ .name = "Reader", .app_id = "org.tesselix.reader", .start_ms = 600, .create = controls.createReader },
+    .{ .name = "Controls", .app_id = "org.kuroko.controls", .start_ms = 300, .create = controls.createControls },
+    .{ .name = "Scroll Lab", .app_id = "org.kuroko.scroll-lab", .start_ms = 1200, .create = controls.createScrollLab },
+    .{ .name = "Stopwatch", .app_id = "org.kuroko.stopwatch", .start_ms = 150, .create = controls.createStopwatch },
+    .{ .name = "Notes", .app_id = "org.kuroko.notes", .start_ms = 400, .create = controls.createNotes },
+    .{ .name = "Reader", .app_id = "org.kuroko.reader", .start_ms = 600, .create = controls.createReader },
 };
 
 const Options = struct {
@@ -142,7 +142,7 @@ fn mods() core.input.Mods {
 }
 
 /// Translates one SDL event. Returns null for events the core ignores.
-/// SDL3 reports pointer positions in window points, which are Tesselix's
+/// SDL3 reports pointer positions in window points, which are Kuroko's
 /// logical pixels.
 fn translate(ev: *const c.Event) ?core.input.Event {
     switch (ev.type) {
@@ -157,7 +157,7 @@ fn translate(ev: *const c.Event) ?core.input.Event {
         },
         c.EVENT_MOUSE_WHEEL => {
             // Remove the host's direction flip; positive = away from the
-            // user. Tesselix's forward direction is toward the user.
+            // user. Kuroko's forward direction is toward the user.
             const flip: f32 = if (ev.wheel.direction == c.MOUSEWHEEL_FLIPPED) -1 else 1;
             const y = ev.wheel.y * flip;
             const x = ev.wheel.x * flip;
@@ -289,13 +289,13 @@ const StateFiles = struct {
     }
 };
 
-/// A file in $XDG_STATE_HOME/tesselix (~/.local/state/tesselix), as txdesk
+/// A file in $XDG_STATE_HOME/kuroko (~/.local/state/kuroko), as txdesk
 /// keeps them.
 fn stateFile(init: std.process.Init, name: []const u8) ![]const u8 {
     const arena = init.arena.allocator();
-    if (init.environ_map.get("XDG_STATE_HOME")) |st| return std.fs.path.join(arena, &.{ st, "tesselix", name });
+    if (init.environ_map.get("XDG_STATE_HOME")) |st| return std.fs.path.join(arena, &.{ st, "kuroko", name });
     const home = init.environ_map.get("HOME") orelse "/tmp";
-    return std.fs.path.join(arena, &.{ home, ".local/state/tesselix", name });
+    return std.fs.path.join(arena, &.{ home, ".local/state/kuroko", name });
 }
 
 /// Monotonic nanoseconds since start: the core's frame clock.
@@ -352,9 +352,9 @@ fn script(name: []const u8) struct { steps: []const Step, end: i64 } {
             motion(1800, 650, 460), motion(1850, 600, 460), motion(1900, 560, 460),
         };
         const swap = [_]Step{
-            motion(1700, 1060, 63),
-            .{ .t = 1750, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 1060, .y = 63 } } },
-            motion(1800, 900, 200), motion(1850, 500, 400), motion(1900, 350, 420),
+            motion(1700, 1250, 43),
+            .{ .t = 1750, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 1250, .y = 43 } } },
+            motion(1800, 900, 200), motion(1850, 500, 300), motion(1900, 350, 320),
         };
         const minimize = [_]Step{
             motion(1700, 300, 700),
@@ -556,7 +556,7 @@ pub fn main(init: std.process.Init) !void {
     var use_gpu = !opts.cpu and !env_cpu and (opts.snapshot == null or opts.gpu_snapshot);
     const api: txgl.Api = if (builtin.os.tag == .macos) .gl33 else .gles30;
     if (use_gpu) setGlAttributes(api);
-    const window = c.SDL_CreateWindow("Tesselix (simulator)", win_w, win_h, c.WINDOW_RESIZABLE | c.WINDOW_HIGH_PIXEL_DENSITY | (if (opts.fullscreen) c.WINDOW_FULLSCREEN else 0) | (if (use_gpu) c.WINDOW_OPENGL else 0)) orelse {
+    const window = c.SDL_CreateWindow("Kuroko (simulator)", win_w, win_h, c.WINDOW_RESIZABLE | c.WINDOW_HIGH_PIXEL_DENSITY | (if (opts.fullscreen) c.WINDOW_FULLSCREEN else 0) | (if (use_gpu) c.WINDOW_OPENGL else 0)) orelse {
         std.log.err("SDL_CreateWindow: {s}", .{c.SDL_GetError()});
         return error.Sdl;
     };
@@ -628,8 +628,8 @@ pub fn main(init: std.process.Init) !void {
     var state_files: StateFiles = .{ .io = io, .dir = try stateFile(init, "") };
     comp.state_reader = .{ .ctx = &state_files, .read = StateFiles.read };
 
-    // Tesselix as a Wayland server: apps started from the launcher (and
-    // any app given WAYLAND_DISPLAY) open their windows in Tesselix.
+    // Kuroko as a Wayland server: apps started from the launcher (and
+    // any app given WAYLAND_DISPLAY) open their windows in Kuroko.
     var adopt: Adopt = .{ .comp = comp, .clock = clock };
     var child_env: [3][]const u8 = undefined;
     const wl: ?*txwl.Server = if (opts.snapshot != null) null else txwl.Server.create(gpa) catch |err| blk: {

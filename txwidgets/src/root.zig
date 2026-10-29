@@ -1,4 +1,4 @@
-//! txwidgets: the Tesselix widget library (Mode A, in-process).
+//! txwidgets: the Kuroko widget library (Mode A, in-process).
 //! Pure Zig; renders on the CPU into a pixel buffer, or records a draw list
 //! for a GPU renderer.
 

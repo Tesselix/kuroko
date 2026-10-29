@@ -1,10 +1,10 @@
-# Tesselix — Look and Controls
+# Kuroko — Look and Controls
 
 Oct 14, 2026 · @feral keep
 
 ## Purpose and notation
 
-This document records how Tesselix looks and how its basic controls behave. It starts with color, borders, scrolling and keyboard navigation; other controls (buttons, toggles, text fields) will be added as they are discussed. It applies to the widget library and to the compositor's built-in UI.
+This document records how Kuroko looks and how its basic controls behave. It starts with color, borders, scrolling and keyboard navigation; other controls (buttons, toggles, text fields) will be added as they are discussed. It applies to the widget library and to the compositor's built-in UI.
 
 It builds on the Human Factors reference, the Top-Level Design and the Widget Framework. Where they differ, the Top-Level Design wins.
 
@@ -20,7 +20,7 @@ Notation:
 ### Direction (agreed)
 
 - Calm, clean and professional. The inspiration is the principles of the macOS look: restrained color, thin lines, controls that stay out of the way.
-- Principles, not appearance. Tesselix keeps its own visual identity.
+- Principles, not appearance. Kuroko keeps its own visual identity.
 
 ### Accent color (agreed)
 
@@ -122,7 +122,7 @@ Research basis:
 ### Shift = run (agreed)
 
 - Shift + wheel moves fast, like a running key in games.
-- Where Tesselix solves a problem other desktops have, it overrides their conventions. Shift + wheel no longer means horizontal scrolling.
+- Where Kuroko solves a problem other desktops have, it overrides their conventions. Shift + wheel no longer means horizontal scrolling.
 - (suggestion) One setting restores the old behavior for users who need it.
 
 ### Scrollbar (agreed)
@@ -228,7 +228,7 @@ Nobody creates landmarks by hand. They come on their own:
 
 ## Text field and text area
 
-This section covers what is specific to Tesselix. Ordinary properties (font, text color, border style and so on) are parameters as in any toolkit and are not listed.
+This section covers what is specific to Kuroko. Ordinary properties (font, text color, border style and so on) are parameters as in any toolkit and are not listed.
 
 ### States (agreed)
 
@@ -312,7 +312,7 @@ Sources, set through the controller, from a fixed set:
 | Object list | The app passes records, with a **display field** (shown), an **insert field** (typed in; may differ, for example an ID or an email) and an optional **detail field** (a second, dimmer line) |
 | App-provided | The library asks the app for suggestions for a prefix; the app answers asynchronously |
 
-- **The library makes no network calls.** A remote source is "app-provided": the app fetches from wherever it wants and answers. In Tesselix's own apps, only the gateway reaches the network.
+- **The library makes no network calls.** A remote source is "app-provided": the app fetches from wherever it wants and answers. In Kuroko's own apps, only the gateway reaches the network.
 - **Timing:** local suggestions appear within 0.1 s. Remote ones are **added** when they arrive and never reorder words already shown. Typing cancels stale requests, with a short debounce.
 - **Matching policy:** prefix, contains, fuzzy.
 
@@ -444,7 +444,7 @@ Sources, from a fixed set:
 | Hover enlargement | Widget library | Framework apps (a compositor lens for other apps may come later) |
 | Wheel bands, scroll direction | [compositor] input path | Every app |
 | Shift = run | [compositor] input path | Every app (see Open questions) |
-| Scrollbar, map, magnifier, viewport and center markers, landmarks, back marker | Widget library | Tesselix apps and third-party apps built on the framework |
+| Scrollbar, map, magnifier, viewport and center markers, landmarks, back marker | Widget library | Kuroko apps and third-party apps built on the framework |
 | Home/End behavior | Widget library | Framework apps; other apps keep their own |
 | Text field and text area: sizing, overflow, fill helper, alignment | Widget library | Framework apps |
 | Search field: display modes, reverse, hit units | Widget library | Framework apps |

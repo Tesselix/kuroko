@@ -1,12 +1,12 @@
 //! Unix-socket helpers shared by the compositor and desktop services.
 //!
-//! Sockets live in `$XDG_RUNTIME_DIR/tesselix/` (mode 0700). macOS has no
-//! XDG_RUNTIME_DIR, so the simulator falls back to `$TMPDIR/tesselix/`,
+//! Sockets live in `$XDG_RUNTIME_DIR/kuroko/` (mode 0700). macOS has no
+//! XDG_RUNTIME_DIR, so the simulator falls back to `$TMPDIR/kuroko/`,
 //! which macOS already makes per-user.
 //!
 //! These calls go straight to libc: the compositor needs non-blocking
 //! sockets inside its own event loop, and std.Io's networking (Zig 0.16)
-//! blocks the calling task. Every Tesselix process links libc anyway
+//! blocks the calling task. Every Kuroko process links libc anyway
 //! (wlroots, SDL3).
 //!
 //! TODO(linux): check peers with SO_PEERCRED (Tessel Store, Authorization).
@@ -36,15 +36,15 @@ fn toZ(buf: []u8, s: []const u8) ![:0]const u8 {
     return buf[0..s.len :0];
 }
 
-/// Writes "<runtime dir>/tesselix/<name>" into `buf` and creates the
+/// Writes "<runtime dir>/kuroko/<name>" into `buf` and creates the
 /// directory with mode 0700 if needed.
 pub fn socketPath(buf: []u8, name: []const u8) ![]const u8 {
     const base_z = c.getenv("XDG_RUNTIME_DIR") orelse c.getenv("TMPDIR") orelse "/tmp";
     const base = std.mem.trimEnd(u8, std.mem.span(base_z), "/");
-    const dir_len = base.len + "/tesselix".len;
+    const dir_len = base.len + "/kuroko".len;
     if (dir_len + 2 + name.len > buf.len) return error.NameTooLong;
     @memcpy(buf[0..base.len], base);
-    @memcpy(buf[base.len..dir_len], "/tesselix");
+    @memcpy(buf[base.len..dir_len], "/kuroko");
     buf[dir_len] = 0;
     const dir_z: [*:0]const u8 = buf[0..dir_len :0];
     _ = c.mkdir(dir_z, 0o700); // EEXIST is fine

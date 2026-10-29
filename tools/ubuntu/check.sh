@@ -1,9 +1,9 @@
 #!/bin/sh
-# Checks the Ubuntu ARM VM before running Tesselix: CPU, display device and
+# Checks the Ubuntu ARM VM before running Kuroko: CPU, display device and
 # 3D acceleration, permissions, libraries, and anything that would hold the
 # screen. Changes nothing. Run it on the VM:
 #
-#   sh /mnt/shared/tesselix/check.sh
+#   sh /mnt/shared/kuroko/check.sh
 here=$(cd "$(dirname "$0")" && pwd)
 fail=0
 ok()   { printf '  ok    %s\n' "$1"; }
@@ -12,7 +12,7 @@ bad()  { printf '  FAIL  %s\n' "$1"; fail=1; }
 in_group() { id -nG | tr ' ' '\n' | grep -qx "$1"; }
 
 if [ "$(id -u)" -eq 0 ]; then
-    echo "Run this without sudo, as the user who runs Tesselix: group and"
+    echo "Run this without sudo, as the user who runs Kuroko: group and"
     echo "session checks below are for root, not for you."
     echo
 fi
@@ -84,7 +84,7 @@ holder=$(pgrep -l -x 'Xorg|Xwayland|gnome-shell|kwin_wayland|weston|sway|mutter|
 [ -z "$holder" ] && ok "nothing else holds the screen" || bad "another display server is running: $holder"
 pgrep -x txsim >/dev/null && bad "txsim is already running"
 [ -n "$XDG_RUNTIME_DIR" ] || [ -d "/run/user/$(id -u)" ] && ok "runtime dir /run/user/$(id -u)" \
-    || warn "no XDG_RUNTIME_DIR; Tesselix sockets need one (log in on the console or over SSH)"
+    || warn "no XDG_RUNTIME_DIR; Kuroko sockets need one (log in on the console or over SSH)"
 if [ -n "$SSH_CONNECTION" ]; then
     warn "over SSH: start run.sh from the VM's console instead (cage needs the console's seat)"
 fi

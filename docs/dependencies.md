@@ -2,7 +2,7 @@
 
 ## Rule: latest solid version (agreed, 2026-10-14)
 
-Tesselix uses the **latest solid** version of every tool and library.
+Kuroko uses the **latest solid** version of every tool and library.
 
 - **Solid** = a stable release (not a beta, release candidate or nightly)
   whose version line (major.minor) has been out for **at least 3 months**.
@@ -27,7 +27,7 @@ Tesselix uses the **latest solid** version of every tool and library.
 GPU: OpenGL ES 3.0 (Linux) and OpenGL 3.3 core (macOS), from the system's
 driver (Mesa on Linux); loaded at run time, nothing to pin.
 
-Later, for Tesselix's own Linux backend (no wlroots, see the Top-Level
+Later, for Kuroko's own Linux backend (no wlroots, see the Top-Level
 Design, "Foundation"): libdrm, GBM and EGL (Mesa), libinput, libxkbcommon,
 libseat, wayland-protocols (XML, for the protocol definitions). Their
 versions are chosen by the same rule when the backend is built.

@@ -1,5 +1,5 @@
 //! txcomp: the compositor core. Backend-independent; the simulator backend
-//! (tools/txsim) and, later, Tesselix's own DRM/KMS backend drive it.
+//! (tools/txsim) and, later, Kuroko's own DRM/KMS backend drive it.
 
 pub const tiling = @import("tiling.zig");
 pub const chrome = @import("chrome.zig");

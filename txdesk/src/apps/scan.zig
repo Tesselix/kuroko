@@ -665,7 +665,7 @@ pub fn scriptTarget(gpa: std.mem.Allocator, text: []const u8, script_dir: []cons
 
 // ------------------------------------------------------- the file itself
 
-/// Loads `apps.tslx` into an empty store. A missing file is an empty
+/// Loads `apps.krkde` into an empty store. A missing file is an empty
 /// registry; an unreadable one is moved aside to `<path>.broken`.
 pub fn load(gpa: std.mem.Allocator, io: std.Io, path: []const u8, store: *Store, log: *@import("txcore").format.RepairLog) !void {
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(256 * 1024 * 1024)) catch |err| switch (err) {
@@ -681,7 +681,7 @@ pub fn load(gpa: std.mem.Allocator, io: std.Io, path: []const u8, store: *Store,
     };
 }
 
-/// Writes `apps.tslx`: a temporary file renamed over the old one, so a
+/// Writes `apps.krkde`: a temporary file renamed over the old one, so a
 /// crash never leaves half a file.
 pub fn save(gpa: std.mem.Allocator, io: std.Io, path: []const u8, store: *Store) !void {
     store.save_count += 1;
@@ -821,7 +821,7 @@ test "scan: find, skip, ghost, revive" {
     try std.testing.expect(r1.inspected >= 5);
 
     // Save and load: the second scan reads nothing.
-    const file = try std.fs.path.join(a, &.{ r, "state/apps.tslx" });
+    const file = try std.fs.path.join(a, &.{ r, "state/apps.krkde" });
     try save(gpa, io, file, &store);
     var again = Store.init(gpa);
     defer again.deinit();

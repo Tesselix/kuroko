@@ -1,4 +1,4 @@
-//! The influence file for the launcher (focus.tslx): the Focus and Recent
+//! The influence file for the launcher (focus.krkde): the Focus and Recent
 //! lists, written by a predictor (txdesk now, the AI later) and read by the
 //! compositor (Top-Level Design, "Influence files").
 //!
@@ -12,7 +12,7 @@ const format = @import("format.zig");
 pub const List = types.InfluenceList;
 pub const Reason = types.InfluenceReason;
 
-/// One entry: an app (its binary, or its app id for Tesselix's own apps),
+/// One entry: an app (its binary, or its app id for Kuroko's own apps),
 /// optionally with an object (a file) open in it.
 pub const Pick = struct {
     list: List,
@@ -99,7 +99,7 @@ test "the lists survive a round trip; damaged entries are dropped" {
     const gpa = std.testing.allocator;
     const picks = [_]Pick{
         .{ .list = .focus, .reason = .cycle, .value = 5, .app = "/usr/bin/alacritty" },
-        .{ .list = .focus, .reason = .used, .value = 42, .app = "org.tesselix.notes", .object = "/home/u/plan.txt" },
+        .{ .list = .focus, .reason = .used, .value = 42, .app = "org.kuroko.notes", .object = "/home/u/plan.txt" },
         .{ .list = .recent, .reason = .opened, .value = 1_760_000_000, .app = "/opt/google/chrome/chrome" },
     };
     const bytes = try encode(gpa, &picks, 1_760_000_100, .predictor);

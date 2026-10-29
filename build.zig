@@ -1,30 +1,30 @@
-//! Tesselix build. One repo, one pinned Zig version (see build.zig.zon).
+//! Kuroko build. One repo, one pinned Zig version (see build.zig.zon).
 //!
 //!   zig build test        all unit tests (any OS)
 //!   zig build run         the simulator: compositor + desktop + apps (needs SDL3)
 //!   zig build run-desk    the desktop-service stub (context hub)
-//!   zig build run-desk -- apps scan   scan for installed apps (apps.tslx)
+//!   zig build run-desk -- apps scan   scan for installed apps (apps.krkde)
 //!   zig build             everything
 //!
 //! For the Ubuntu ARM VM (from the Mac): `sh tools/ubuntu/build.sh`, which runs
-//!   zig build -Dtarget=aarch64-linux-gnu --prefix ubuntu-share/tesselix
+//!   zig build -Dtarget=aarch64-linux-gnu --prefix ubuntu-share/kuroko
 
 const std = @import("std");
 const builtin = @import("builtin");
 
-// Tesselix is pinned to Zig 0.16.x for development (0.17 before production).
+// Kuroko is pinned to Zig 0.16.x for development (0.17 before production).
 // Other versions change the std APIs this code uses, so stop early with a
 // clear message instead of a page of API errors.
 comptime {
     if (builtin.zig_version.major != 0 or builtin.zig_version.minor != 16) {
-        @compileError("Tesselix needs Zig 0.16.0, but this is Zig " ++ builtin.zig_version_string ++
+        @compileError("Kuroko needs Zig 0.16.0, but this is Zig " ++ builtin.zig_version_string ++
             ". Install 0.16.0 (brew install zig, or https://ziglang.org/download/) and put it first on your PATH.");
     }
 }
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    // ReleaseSafe by default: it is how Tesselix ships (bounds and overflow
+    // ReleaseSafe by default: it is how Kuroko ships (bounds and overflow
     // checks stay on), and Debug is too slow to judge scrolling by feel.
     // Use -Doptimize=Debug for debugging.
     const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Optimization mode (default ReleaseSafe)") orelse .ReleaseSafe;

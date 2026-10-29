@@ -1,4 +1,4 @@
-# Working on Tesselix
+# Working on Kuroko
 
 Read this first, then the design documents in `docs/` for the part you touch.
 
@@ -32,10 +32,10 @@ Read this first, then the design documents in `docs/` for the part you touch.
    pointer past the current event. `endEvent()` checks this.
 2. The compositor never waits on another process. Writes are non-blocking;
    client death is detected from the socket closing.
-3. Every structure that crosses a process or reaches disk is a Tesselix record
+3. Every structure that crosses a process or reaches disk is a Kuroko record
    (`txcore.format`), with fixed-width fields, little-endian, extern structs.
-   Register type IDs in `txcore/src/types.zig`. Files of Tesselix records
-   use the extension `.tslx` (for example `apps.tslx`).
+   Register type IDs in `txcore/src/types.zig`. Files of Kuroko records
+   use the extension `.krkde` (for example `apps.krkde`).
 4. Theme roles only, never hard-coded colors. No state by color alone: add a
    shape cue. Nothing flashes more than 3 times per second.
 5. Acknowledge input within the frame; animations are clock-timed,
@@ -53,5 +53,5 @@ behaviors get a place in `apps/controls`.
 ## The simulator
 
 `tools/txsim` is a thin SDL3 backend for macOS. Everything it does must be
-expressible over the real protocols (Wayland plus the Tesselix protocol);
+expressible over the real protocols (Wayland plus the Kuroko protocol);
 `txwidgets/src/surface.zig` is that contract.

@@ -51,7 +51,7 @@
 			},
 			{
 				"label": "Build for Ubuntu VM",
-				"detail": "aarch64-linux into ubuntu-share/tesselix",
+				"detail": "aarch64-linux into ubuntu-share/kuroko",
 				"type": "shell",
 				"command": "sh tools/ubuntu/build.sh",
 				"group": "build",
@@ -73,7 +73,7 @@
 				}
 			},
 			{
-				"label": "Run Tesselix",
+				"label": "Run Kuroko",
 				"detail": "zig build run: compositor + desktop + Controls and Scroll Lab",
 				"type": "shell",
 				"command": "zig build run",
@@ -87,7 +87,7 @@
 				}
 			},
 			{
-				"label": "Run Tesselix (dark)",
+				"label": "Run Kuroko (dark)",
 				"type": "shell",
 				"command": "zig build run -- --dark",
 				"problemMatcher": {
@@ -100,7 +100,7 @@
 				}
 			},
 			{
-				"label": "Run Tesselix (apps in the panel)",
+				"label": "Run Kuroko (apps in the panel)",
 				"type": "shell",
 				"command": "zig build run -- --panel",
 				"problemMatcher": {
@@ -113,7 +113,7 @@
 				}
 			},
 			{
-				"label": "Run Tesselix (script)",
+				"label": "Run Kuroko (script)",
 				"detail": "Plays one of the simulator's scripted sessions",
 				"type": "shell",
 				"command": "zig build run -- --script ${input:script}",
@@ -143,8 +143,8 @@
 				}
 			},
 			{
-				"label": "Run Tesselix + desktop service",
-				"dependsOn": ["Run Tesselix", "Run desktop service"],
+				"label": "Run Kuroko + desktop service",
+				"dependsOn": ["Run Kuroko", "Run desktop service"],
 				"dependsOrder": "parallel",
 				"problemMatcher": []
 			}
@@ -167,7 +167,7 @@
 		"version": "0.2.0",
 		"configurations": [
 			{
-				"name": "Tesselix",
+				"name": "Kuroko",
 				"type": "lldb",
 				"request": "launch",
 				"program": "${workspaceFolder}/zig-out/bin/txsim",
@@ -176,7 +176,7 @@
 				"preLaunchTask": "Build"
 			},
 			{
-				"name": "Tesselix (dark)",
+				"name": "Kuroko (dark)",
 				"type": "lldb",
 				"request": "launch",
 				"program": "${workspaceFolder}/zig-out/bin/txsim",
@@ -185,7 +185,7 @@
 				"preLaunchTask": "Build"
 			},
 			{
-				"name": "Tesselix (apps in the panel)",
+				"name": "Kuroko (apps in the panel)",
 				"type": "lldb",
 				"request": "launch",
 				"program": "${workspaceFolder}/zig-out/bin/txsim",
@@ -194,7 +194,7 @@
 				"preLaunchTask": "Build"
 			},
 			{
-				"name": "Tesselix (script)",
+				"name": "Kuroko (script)",
 				"type": "lldb",
 				"request": "launch",
 				"program": "${workspaceFolder}/zig-out/bin/txsim",
@@ -203,7 +203,7 @@
 				"preLaunchTask": "Build"
 			},
 			{
-				"name": "Tesselix (Debug build)",
+				"name": "Kuroko (Debug build)",
 				"type": "lldb",
 				"request": "launch",
 				"program": "${workspaceFolder}/zig-out/debug/bin/txsim",
@@ -223,8 +223,8 @@
 		],
 		"compounds": [
 			{
-				"name": "Tesselix + desktop service",
-				"configurations": ["Tesselix", "Desktop service (txdesk)"],
+				"name": "Kuroko + desktop service",
+				"configurations": ["Kuroko", "Desktop service (txdesk)"],
 				"stopAll": true
 			}
 		],

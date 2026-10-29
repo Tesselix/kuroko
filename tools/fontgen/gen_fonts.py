@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rasterizes UI font atlases into Tesselix records (type 0x0101 FontAtlas).
+"""Rasterizes UI font atlases into Kuroko records (type 0x0101 FontAtlas).
 
 This is a stopgap until the text stack is chosen (Widget Framework, open
 question: HarfBuzz + FreeType, or pure Zig). Atlases are pre-rendered alpha
@@ -12,7 +12,7 @@ Usage:
 The first renders the UI font (Inter). The second renders the Hebrew
 fallback atlases (Noto Sans Hebrew), used for what the UI font lacks.
 
-Needs Pillow and fontTools. The output is committed, so building Tesselix
+Needs Pillow and fontTools. The output is committed, so building Kuroko
 does not need Python.
 """
 import struct
@@ -101,8 +101,8 @@ def main() -> None:
     for name, path, weight in ((prefix + "regular", regular, 400), (prefix + "semibold", semibold, 600)):
         for px in SIZES:
             data = build(path, weight, px, ui)
-            (out / f"{name}-{px}.tslx").write_bytes(data)
-            print(f"{name}-{px}.tslx {len(data)} bytes")
+            (out / f"{name}-{px}.krkde").write_bytes(data)
+            print(f"{name}-{px}.krkde {len(data)} bytes")
 
 
 if __name__ == "__main__":

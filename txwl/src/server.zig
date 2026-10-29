@@ -1,4 +1,4 @@
-//! The Wayland server: Tesselix as the display server apps connect to.
+//! The Wayland server: Kuroko as the display server apps connect to.
 //!
 //! Apps never choose their own place or size. The compositor gives each
 //! window its area and state (xdg_toplevel.configure: tiled, maximized,
@@ -240,7 +240,7 @@ pub const Server = struct {
     out_scale: i32 = 1,
     keymap_text: []const u8 = keymap.us,
 
-    /// Listens on `$XDG_RUNTIME_DIR/wayland-tesselix-N`, the first N free
+    /// Listens on `$XDG_RUNTIME_DIR/wayland-kuroko-N`, the first N free
     /// (a lock file per name, as libwayland does).
     pub fn create(gpa: std.mem.Allocator) !*Server {
         const self = try gpa.create(Server);
@@ -250,7 +250,7 @@ pub const Server = struct {
         const base = std.mem.trimEnd(u8, std.mem.span(base_z), "/");
         var n: u32 = 0;
         while (n < 10) : (n += 1) {
-            const path = try std.fmt.bufPrint(&self.path_buf, "{s}/wayland-tesselix-{d}", .{ base, n });
+            const path = try std.fmt.bufPrint(&self.path_buf, "{s}/wayland-kuroko-{d}", .{ base, n });
             var lock_buf: [280]u8 = undefined;
             const lock = try std.fmt.bufPrintZ(&lock_buf, "{s}.lock", .{path});
             const lfd = c.open(lock, .{ .ACCMODE = .RDWR, .CREAT = true, .CLOEXEC = true }, @as(c.mode_t, 0o660));
@@ -773,7 +773,7 @@ pub const Client = struct {
                 try w.int(@divTrunc(srv.out_w * 254, 960)); // ~96 dpi
                 try w.int(@divTrunc(srv.out_h * 254, 960));
                 try w.int(0);
-                try w.string("Tesselix");
+                try w.string("Kuroko");
                 try w.string("Screen");
                 try w.int(0);
                 w.end();
