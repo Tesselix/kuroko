@@ -229,6 +229,10 @@ touches. Change the code and this file together.
   `libSDL3.so.0`) because the Mac has no SDL3 for the target; a test keeps
   the stub in step with `sdl.zig`. At run time the VM's real libSDL3 is
   loaded.
+- Zig derives `.fingerprint` in `build.zig.zon` from the package `.name`, so
+  a rename breaks every build ("invalid fingerprint"). `tools/fingerprint.sh`
+  takes the value zig suggests and writes it in; `build.sh` and the
+  `test`, `run`, `clean` and `clean-ubuntu` make targets run it first.
 - On the VM the simulator runs inside `cage` (Wayland kiosk, wlroots) with
   `SDL_VIDEODRIVER=wayland`, `WLR_RENDERER=gles2`. SDL3's KMS/DRM driver does
   not work in UTM: it scans out ARGB8888 framebuffers, and the virtio-gpu

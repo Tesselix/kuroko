@@ -19,6 +19,7 @@ optimize=${OPTIMIZE:-ReleaseSafe}
 out="$share/kuroko"
 
 cd "$root"
+sh tools/fingerprint.sh
 zig build -Dtarget="$target" -Doptimize="$optimize" --prefix "$out"
 # Readable and runnable by everyone: on the VM the share shows the Mac's
 # owner (uid 501), not the VM's user.

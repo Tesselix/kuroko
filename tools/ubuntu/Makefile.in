@@ -7,6 +7,10 @@
 #   make ubuntu OPTIMIZE=Debug    the same, as a Debug build
 #   make vm              print the commands to run on the VM
 #   make clean-ubuntu    remove the VM build from ubuntu-share
+#   make clean           remove all build output (zig-out, .zig-cache, VM build)
+#
+# Every build and clean target first runs tools/fingerprint.sh, which repairs
+# the build.zig.zon fingerprint after the package is renamed.
 #
 # ubuntu-share/ is the UTM shared folder; the VM mounts it (read-only) at
 # VM_SHARE. On the VM:
@@ -21,14 +25,17 @@ TARGET   ?= aarch64-linux-gnu
 OPTIMIZE ?= ReleaseSafe
 OUT      := $(SHARE)/kuroko
 
-.PHONY: all test run ubuntu vm clean-ubuntu
+.PHONY: all fingerprint test run ubuntu vm clean clean-ubuntu
 
 all: test
 
-test:
+fingerprint:
+	@sh tools/fingerprint.sh
+
+test: fingerprint
 	zig build test --summary all
 
-run:
+run: fingerprint
 	zig build run
 
 ubuntu:
@@ -40,5 +47,8 @@ vm:
 	@echo "  sh $(VM_SHARE)/kuroko/setup.sh     (once)"
 	@echo "  sh $(VM_SHARE)/kuroko/run.sh"
 
-clean-ubuntu:
+clean-ubuntu: fingerprint
 	rm -rf $(OUT)
+
+clean: clean-ubuntu
+	rm -rf zig-out .zig-cache
