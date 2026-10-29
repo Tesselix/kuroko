@@ -7,7 +7,7 @@
 const std = @import("std");
 
 /// Index + generation, 8 bytes. The only thing stored long-term, and usable
-/// directly as a Tesselix ID.
+/// directly as a Kuroko ID.
 pub const Handle = extern struct {
     index: u32,
     generation: u32,

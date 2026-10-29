@@ -8,9 +8,9 @@
 //!  - row 1 is as tall as its content needs; row 0 gets the rest
 //!  - a lone window fills the whole area; tiles appear with two or more
 //!  - each window gets a **window tile**: the area allocated to it
-//!  - in normal mode a window fills about 95% of its tile, centered, so a
-//!    margin shows where the tile ends (agreed 2026-10-14; replaces
-//!    "centered at its optimal size")
+//!  - in normal mode a window fills 99% of its tile, centered, so a thin
+//!    margin shows where the tile ends (agreed 2026-10-14 at 95%, raised to
+//!    99% 2026-10-28; replaces "centered at its optimal size")
 //!  - a tile is as wide as its window needs (optimal width / fill); the
 //!    leftover width goes to the tiles of windows that can use it
 //!    (growable: reflowable content such as documents), equally between
@@ -29,8 +29,8 @@ pub const max_windows = 4;
 pub const max_rows = 2;
 
 pub const Params = struct {
-    /// How much of its tile a window fills, per axis (0.90–0.95).
-    fill: f32 = 0.95,
+    /// How much of its tile a window fills, per axis.
+    fill: f32 = 0.99,
     min_slot_w: i32 = 260,
     min_row_h: i32 = 140,
     /// Row 1 may take at most this fraction of the height.
@@ -183,9 +183,9 @@ test "a lone window fills the whole area" {
 test "two windows that fit: leftover shared equally when neither can grow" {
     var out: [4]Slot = undefined;
     layout(screen, &.{ .{ .optimal = .{ .w = 570, .h = 800 } }, .{ .optimal = .{ .w = 380, .h = 800 } } }, .{}, .{}, &out);
-    // Tiles of 600 and 400 needed; 600 left over, 300 each.
-    try testing.expectEqual(@as(i32, 900), out[0].slot.w);
-    try testing.expectEqual(@as(i32, 700), out[1].slot.w);
+    // Tiles of 576 and 384 needed; 640 left over, 320 each.
+    try testing.expectEqual(@as(i32, 896), out[0].slot.w);
+    try testing.expectEqual(@as(i32, 704), out[1].slot.w);
     try testing.expectEqual(@as(i32, 0), out[0].row);
     try testing.expectEqual(@as(i32, 0), out[1].row);
 }
@@ -193,16 +193,16 @@ test "two windows that fit: leftover shared equally when neither can grow" {
 test "the leftover goes to the window that can use it" {
     var out: [4]Slot = undefined;
     layout(screen, &.{ .{ .optimal = .{ .w = 570, .h = 800 } }, .{ .optimal = .{ .w = 380, .h = 800 }, .growable = true } }, .{}, .{}, &out);
-    try testing.expectEqual(@as(i32, 600), out[0].slot.w); // just what it needs
-    try testing.expectEqual(@as(i32, 570), out[0].frame.w); // 95% of it = optimal
-    try testing.expectEqual(@as(i32, 1000), out[1].slot.w);
+    try testing.expectEqual(@as(i32, 576), out[0].slot.w); // just what it needs
+    try testing.expectEqual(@as(i32, 570), out[0].frame.w); // 99% of it = optimal
+    try testing.expectEqual(@as(i32, 1024), out[1].slot.w);
 }
 
 test "too wide: the focused window keeps its optimal width" {
     var out: [4]Slot = undefined;
     layout(screen, &.{ .{ .optimal = .{ .w = 1000, .h = 800 } }, .{ .optimal = .{ .w = 1000, .h = 800 }, .focused = true } }, .{}, .{}, &out);
-    try testing.expectEqual(@as(i32, 1053), out[1].slot.w); // 1000 / 0.95
-    try testing.expectEqual(@as(i32, 547), out[0].slot.w);
+    try testing.expectEqual(@as(i32, 1011), out[1].slot.w); // 1000 / 0.99
+    try testing.expectEqual(@as(i32, 589), out[0].slot.w);
 }
 
 test "third window goes to a short second row" {
@@ -216,14 +216,14 @@ test "third window goes to a short second row" {
     try testing.expectEqual(@as(i32, 200), out[2].slot.h);
     try testing.expectEqual(@as(i32, 700), out[0].slot.h);
     try testing.expectEqual(@as(i32, 1600), out[2].slot.w); // spans the row
-    try testing.expectEqual(@as(i32, 40), out[2].frame.x); // 95% of the tile, centered
+    try testing.expectEqual(@as(i32, 8), out[2].frame.x); // 99% of the tile, centered
 }
 
 test "too wide: fixed content keeps its tile, growable takes the rest" {
     var out: [4]Slot = undefined;
     layout(screen, &.{ .{ .optimal = .{ .w = 950, .h = 800 } }, .{ .optimal = .{ .w = 760, .h = 800 }, .growable = true, .focused = true } }, .{}, .{}, &out);
-    try testing.expectEqual(@as(i32, 1000), out[0].slot.w);
-    try testing.expectEqual(@as(i32, 600), out[1].slot.w);
+    try testing.expectEqual(@as(i32, 960), out[0].slot.w);
+    try testing.expectEqual(@as(i32, 640), out[1].slot.w);
 }
 
 test "overrides from border drags" {

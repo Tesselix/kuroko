@@ -200,6 +200,26 @@ pub extern "c" fn SDL_CreateTexture(r: *Renderer, format: u32, access: c_int, w:
 pub extern "c" fn SDL_DestroyTexture(t: *Texture) void;
 pub extern "c" fn SDL_SetTextureScaleMode(t: *Texture, mode: c_int) bool;
 pub extern "c" fn SDL_UpdateTexture(t: *Texture, rect: ?*const anyopaque, pixels: *const anyopaque, pitch: c_int) bool;
+// OpenGL context (the GPU path).
+pub const WINDOW_OPENGL: u64 = 0x2;
+pub const GLContext = opaque {};
+pub const GL_DOUBLEBUFFER: c_int = 5;
+pub const GL_DEPTH_SIZE: c_int = 6;
+pub const GL_CONTEXT_MAJOR_VERSION: c_int = 17;
+pub const GL_CONTEXT_MINOR_VERSION: c_int = 18;
+pub const GL_CONTEXT_FLAGS: c_int = 19;
+pub const GL_CONTEXT_PROFILE_MASK: c_int = 20;
+pub const GL_CONTEXT_PROFILE_CORE: c_int = 0x1;
+pub const GL_CONTEXT_PROFILE_ES: c_int = 0x4;
+pub const GL_CONTEXT_FORWARD_COMPATIBLE_FLAG: c_int = 0x2;
+pub extern "c" fn SDL_GL_SetAttribute(attr: c_int, value: c_int) bool;
+pub extern "c" fn SDL_GL_CreateContext(w: *Window) ?*GLContext;
+pub extern "c" fn SDL_GL_DestroyContext(ctx: *GLContext) bool;
+pub extern "c" fn SDL_GL_MakeCurrent(w: *Window, ctx: ?*GLContext) bool;
+pub extern "c" fn SDL_GL_SetSwapInterval(interval: c_int) bool;
+pub extern "c" fn SDL_GL_SwapWindow(w: *Window) bool;
+pub extern "c" fn SDL_GL_GetProcAddress(name: [*:0]const u8) ?*const anyopaque;
+
 pub extern "c" fn SDL_WaitEventTimeout(ev: *Event, timeout_ms: i32) bool;
 pub extern "c" fn SDL_PollEvent(ev: *Event) bool;
 pub extern "c" fn SDL_GetModState() u16;

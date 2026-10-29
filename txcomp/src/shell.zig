@@ -190,7 +190,20 @@ pub const AppInfo = struct {
     missing: bool = false,
     /// A newer version is available: an up-arrow badge on the icon.
     update: bool = false,
+    /// Its icon, when txdesk has drawn one.
+    icon: chrome.Icon = .{},
 };
+
+/// An entry of Focus or Recent: an app (its launcher index) and why it is
+/// offered (txcore/src/influence.zig).
+pub const Pick = struct {
+    app: usize,
+    reason: core.types.InfluenceReason = .opened,
+    /// See InfluenceReason; 0 with `.opened` means "when is unknown".
+    value: i64 = 0,
+};
+
+pub const Section = enum { focus, recent, all };
 
 pub const Launcher = struct {
     open: bool = false,
@@ -200,20 +213,30 @@ pub const Launcher = struct {
     filter_len: usize = 0,
     hover: ?usize = null,
     pointer_moved: bool = false,
-    /// Frozen while visible (Top-Level Design: computed at opening).
-    predicted: [4]usize = undefined,
-    predicted_len: usize = 0,
+    /// Focus, then Recent (Top-Level Design, "Launcher"): frozen while
+    /// visible, computed at opening. An app is in at most one of them, and
+    /// All apps leaves out both (don't overload the user).
+    focus: [4]Pick = undefined,
+    focus_len: usize = 0,
+    recent: [4]Pick = undefined,
+    recent_len: usize = 0,
+    /// Wall clock at opening (Unix seconds), for "5 min ago"; 0 unknown.
+    wall_s: i64 = 0,
     /// Alphabetical order of apps, stable.
     order: [96]usize = undefined,
     order_len: usize = 0,
 
     const tile_w = 124;
     const tile_h = 116;
+    /// Focus and Recent tiles have a reason line under the name.
+    const pick_h = 126;
+    /// Between Focus and Recent when they share a row.
+    const band_gap = 48;
     /// App icons are at least 64 px, so badges fit on them.
     const icon_px = 64;
-    const max_tiles = 4 + 96;
+    const max_tiles = 4 + 4 + 96;
 
-    pub fn show(self: *Launcher, screen: Rect, px: f32, py: f32, apps: []const AppInfo, recent: []const usize, now: i64) void {
+    pub fn show(self: *Launcher, screen: Rect, px: f32, py: f32, apps: []const AppInfo, focus: []const Pick, recent: []const Pick, wall_s: i64, now: i64) void {
         self.open = true;
         self.t.set(1, now, 180);
         self.filter_len = 0;
@@ -224,16 +247,25 @@ pub const Launcher = struct {
         const h: i32 = @intFromFloat(@as(f32, @floatFromInt(screen.h)) * 0.7);
         self.rect = (Rect{ .x = @as(i32, @intFromFloat(px)) - @divTrunc(w, 2), .y = @as(i32, @intFromFloat(py)) - @divTrunc(h, 2), .w = w, .h = h }).clampInto(screen.inset(12));
 
-        self.predicted_len = 0;
-        for (recent) |a| {
-            if (self.predicted_len == self.predicted.len) break;
-            if (a >= apps.len or apps[a].hidden or apps[a].missing) continue;
-            self.predicted[self.predicted_len] = a;
-            self.predicted_len += 1;
+        self.wall_s = wall_s;
+        // Focus first; Recent only what Focus does not hold.
+        self.focus_len = 0;
+        for (focus) |p| {
+            if (self.focus_len == self.focus.len) break;
+            if (!offerable(apps, p.app) or self.picked(p.app)) continue;
+            self.focus[self.focus_len] = p;
+            self.focus_len += 1;
+        }
+        self.recent_len = 0;
+        for (recent) |p| {
+            if (self.recent_len == self.recent.len) break;
+            if (!offerable(apps, p.app) or self.picked(p.app)) continue;
+            self.recent[self.recent_len] = p;
+            self.recent_len += 1;
         }
         self.order_len = 0;
         for (apps, 0..) |a, i| {
-            if (a.hidden) continue;
+            if (a.hidden or self.picked(i)) continue;
             if (self.order_len == self.order.len) break;
             self.order[self.order_len] = i;
             self.order_len += 1;
@@ -243,6 +275,42 @@ pub const Launcher = struct {
                 return std.ascii.lessThanIgnoreCase(a[x].name, a[y].name);
             }
         }.lt);
+    }
+
+    fn offerable(apps: []const AppInfo, a: usize) bool {
+        return a < apps.len and !apps[a].hidden and !apps[a].missing;
+    }
+
+    /// Already in Focus or Recent.
+    fn picked(self: *const Launcher, app: usize) bool {
+        for (self.focus[0..self.focus_len]) |p| {
+            if (p.app == app) return true;
+        }
+        for (self.recent[0..self.recent_len]) |p| {
+            if (p.app == app) return true;
+        }
+        return false;
+    }
+
+    /// The reason line under a Focus or Recent tile.
+    fn reasonText(self: *const Launcher, p: Pick, buf: []u8) []const u8 {
+        return switch (p.reason) {
+            .used => if (p.value < 60)
+                std.fmt.bufPrint(buf, "{d} min this week", .{p.value}) catch ""
+            else
+                std.fmt.bufPrint(buf, "{d} h this week", .{@divTrunc(p.value, 60)}) catch "",
+            .cycle => "usually now",
+            .opened => blk: {
+                if (p.value <= 0 or self.wall_s <= 0) break :blk "";
+                const ago = @max(0, self.wall_s - p.value);
+                if (ago < 60) break :blk "just now";
+                if (ago < 3600) break :blk std.fmt.bufPrint(buf, "{d} min ago", .{@divTrunc(ago, 60)}) catch "";
+                if (ago < 86400) break :blk std.fmt.bufPrint(buf, "{d} h ago", .{@divTrunc(ago, 3600)}) catch "";
+                if (ago < 2 * 86400) break :blk "yesterday";
+                break :blk std.fmt.bufPrint(buf, "{d} days ago", .{@divTrunc(ago, 86400)}) catch "";
+            },
+            _ => "",
+        };
     }
 
     pub fn hide(self: *Launcher, now: i64) void {
@@ -263,25 +331,46 @@ pub const Launcher = struct {
         app: usize,
         rect: Rect,
         ghost: bool,
+        section: Section = .all,
+        pick: Pick = .{ .app = 0 },
 
         fn w(self: Tile) i32 {
             return self.rect.w;
         }
     };
 
-    /// Tiles for the current state: predicted section first, then all apps.
+    /// Tiles for the current state: Focus, then Recent (side by side when
+    /// they fit, else one under the other), then all the other apps.
     fn tiles(self: *const Launcher, apps: []const AppInfo, out: []Tile) usize {
         var n: usize = 0;
         const r = self.rect;
-        const pred_y = r.y + 96;
-        const pred_w = @as(i32, @intCast(self.predicted_len)) * tile_w;
-        var x = r.x + @divTrunc(r.w - pred_w, 2);
-        for (self.predicted[0..self.predicted_len]) |a| {
-            out[n] = .{ .app = a, .rect = .{ .x = x, .y = pred_y, .w = tile_w, .h = tile_h }, .ghost = !self.matches(apps[a].name) };
+        const fw = @as(i32, @intCast(self.focus_len)) * tile_w;
+        const rw = @as(i32, @intCast(self.recent_len)) * tile_w;
+        const both = self.focus_len > 0 and self.recent_len > 0;
+        const one_row = !both or fw + band_gap + rw <= r.w - 40;
+        var y = r.y + 96;
+        const gap: i32 = if (both) band_gap else 0;
+        const first_w: i32 = if (one_row) fw + gap + rw else fw;
+        var x = r.x + @divTrunc(r.w - first_w, 2);
+        for (self.focus[0..self.focus_len]) |p| {
+            out[n] = .{ .app = p.app, .rect = .{ .x = x, .y = y, .w = tile_w, .h = pick_h }, .ghost = !self.matches(apps[p.app].name), .section = .focus, .pick = p };
             n += 1;
             x += tile_w;
         }
-        const all_y: i32 = pred_y + @as(i32, if (self.predicted_len > 0) tile_h + 56 else 0);
+        if (both) {
+            if (one_row) {
+                x += band_gap;
+            } else {
+                y += pick_h + 40;
+                x = r.x + @divTrunc(r.w - rw, 2);
+            }
+        }
+        for (self.recent[0..self.recent_len]) |p| {
+            out[n] = .{ .app = p.app, .rect = .{ .x = x, .y = y, .w = tile_w, .h = pick_h }, .ghost = !self.matches(apps[p.app].name), .section = .recent, .pick = p };
+            n += 1;
+            x += tile_w;
+        }
+        const all_y: i32 = y + @as(i32, if (self.focus_len + self.recent_len > 0) pick_h + 48 else 0);
         const cols: i32 = @max(1, @divTrunc(r.w - 80, tile_w));
         const row_w = @min(cols, @as(i32, @intCast(self.order_len))) * tile_w;
         const x0 = r.x + @divTrunc(r.w - row_w, 2);
@@ -395,12 +484,15 @@ pub const Launcher = struct {
 
         var buf: [max_tiles]Tile = undefined;
         const n = self.tiles(apps, &buf);
-        if (self.predicted_len > 0) {
-            _ = cv.text(@floatFromInt(buf[0].rect.x + 8), @floatFromInt(buf[0].rect.y - 22), "MOST PROBABLE", head, th.get(.text_dim).fade(t));
-        }
-        const all_first = self.predicted_len;
-        if (all_first < n) {
-            _ = cv.text(@floatFromInt(buf[all_first].rect.x + 8), @floatFromInt(buf[all_first].rect.y - 22), "ALL APPS", head, th.get(.text_dim).fade(t));
+        // Each section's heading over its first tile.
+        for (buf[0..n], 0..) |tile, i| {
+            if (i > 0 and buf[i - 1].section == tile.section) continue;
+            const label = switch (tile.section) {
+                .focus => "FOCUS",
+                .recent => "RECENT",
+                .all => if (self.focus_len + self.recent_len > 0) "ALL OTHER APPS" else "ALL APPS",
+            };
+            _ = cv.text(@floatFromInt(tile.rect.x + 8), @floatFromInt(tile.rect.y - 22), label, head, th.get(.text_dim).fade(t));
         }
         var all_ghost = true;
         for (buf[0..n]) |tile| {
@@ -419,11 +511,18 @@ pub const Launcher = struct {
                 cv.fillRoundRect(icon, 15, th.get(.text_dim).fade(0.25 * t));
                 cv.dashedRect(icon.inset(-4), 1, 5, 4, th.get(.text_dim).fade(t));
             } else {
-                chrome.drawAppIcon(cv, th, icon, info.name, .title);
+                chrome.drawAppIcon(cv, th, icon, info.name, .title, info.icon);
             }
             const m = font.Metrics.of(.{}, cv.scale);
             const nw = @min(m.width(info.name), @as(f32, tile_w - 12));
             _ = cv.textEllipsis(@as(f32, @floatFromInt(tile.rect.x)) + (@as(f32, tile_w) - nw) / 2, @floatFromInt(tile.rect.y + 80), info.name, tile_w - 12, .{}, th.get(.text).fade(t * a));
+            if (tile.section != .all) {
+                var rbuf: [32]u8 = undefined;
+                const note = self.reasonText(tile.pick, &rbuf);
+                const sm = font.Metrics.of(.{ .size = .small }, cv.scale);
+                const rw = @min(sm.width(note), @as(f32, tile_w - 8));
+                _ = cv.textEllipsis(@as(f32, @floatFromInt(tile.rect.x)) + (@as(f32, tile_w) - rw) / 2, @floatFromInt(tile.rect.y + 97), note, tile_w - 8, .{ .size = .small }, th.get(.text_dim).fade(t * a));
+            }
             if (info.missing and !tile.ghost) {
                 const note = "not installed";
                 const sm = font.Metrics.of(.{ .size = .small }, cv.scale);
@@ -454,7 +553,7 @@ pub const Launcher = struct {
             const running = apps[tile.app].running;
             if (running > 0) {
                 const cx: f32 = @as(f32, @floatFromInt(tile.rect.x)) + tile_w / 2.0;
-                const dy: f32 = @floatFromInt(tile.rect.y + 106);
+                const dy: f32 = @floatFromInt(tile.rect.y + @as(i32, if (tile.section == .all) 106 else 118));
                 const col = th.get(.accent).fade(t * a);
                 if (running == 1) {
                     cv.fillCircle(cx, dy, 3, col);

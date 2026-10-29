@@ -1,5 +1,5 @@
-//! Tesselix binary format: structure headers, records and the
-//! validation and repair ladder (Top-Level Design, "Tesselix binary format").
+//! Kuroko binary format: structure headers, records and the
+//! validation and repair ladder (Top-Level Design, "Kuroko binary format").
 //!
 //! Layout on disk and on the wire is little-endian. A record is:
 //!
@@ -20,7 +20,7 @@ const std = @import("std");
 pub const magic: u32 = 0xFFFFFFFB;
 pub const magic_swapped: u32 = @byteSwap(magic);
 
-/// Every Tesselix structure starts with this header. Nested structures carry
+/// Every Kuroko structure starts with this header. Nested structures carry
 /// only this header; top-level records use `RecordHeader`.
 pub const Header = extern struct {
     magic: u32 = magic,

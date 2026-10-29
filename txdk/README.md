@@ -1,6 +1,6 @@
 # txdk
 
-The SDK for building Tesselix apps in any language (Widget Framework,
+The SDK for building Kuroko apps in any language (Widget Framework,
 "Architecture" and "Bindings"):
 
 - the C ABI of the widget library (Mode A from any language with FFI),

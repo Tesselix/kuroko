@@ -1,7 +1,8 @@
 //! Compositor core: window model, attention tiling, focus, chrome, shell UI
-//! and input routing. Backend-independent: a backend (the macOS
-//! simulator now, wlroots on Linux later) feeds input events and a frame
-//! clock, and presents the canvas this core draws into.
+//! and input routing. Backend-independent: a backend (the simulator now,
+//! Kuroko's own DRM/KMS backend on Linux later) feeds input events and a
+//! frame clock, and presents what this core draws: pixels on the CPU, or a
+//! draw list for the GPU renderer (txgl).
 //!
 //! Guiding rule (Top-Level Design): the compositor owns everything the
 //! user can see or touch and never waits on anything else.
@@ -24,6 +25,7 @@ const Tween = core.anim.Tween;
 const Event = core.input.Event;
 const Canvas = tw.Canvas;
 const Surface = tw.Surface;
+const Trust = core.types.Trust;
 const ms = std.time.ns_per_ms;
 
 /// An app the compositor can launch. In the simulator apps are linked in
@@ -36,8 +38,37 @@ pub const AppEntry = struct {
     create: *const fn (std.mem.Allocator) anyerror!Surface,
 };
 
+/// Who a Wayland client is (txwl: SO_PEERCRED, /proc/<pid>/exe).
+pub const Client = struct {
+    /// 0 when unknown.
+    pid: i32 = 0,
+    /// The binary, symlinks resolved; "" when unknown.
+    exe: []const u8 = "",
+};
+
+/// A window's trust (docs/user-signals.md), for the paste check and the
+/// Security menu.
+pub const WindowTrust = struct {
+    /// The app's part: its mark, else trusted when installed.
+    app: Trust,
+    /// The app and the object open in the window together.
+    window: Trust,
+    pid: i32,
+    /// The binary the app part was decided by ("" for Kuroko's own apps).
+    exe: []const u8,
+    object: []const u8,
+};
+
+/// How the compositor reads the files txdesk keeps for it (focus.krkde,
+/// icons.krkde), by name. The backend does the reading; the core stays free
+/// of I/O. Returns the file's bytes (owned by the caller), or null.
+pub const StateReader = struct {
+    ctx: *anyopaque,
+    read: *const fn (ctx: *anyopaque, gpa: std.mem.Allocator, name: []const u8) ?[]u8,
+};
+
 pub const Params = struct {
-    /// Tesselix defaults (Look and Controls, "Scroll direction").
+    /// Kuroko defaults (Look and Controls, "Scroll direction").
     wheel_natural: bool = false,
     touchpad_natural: bool = true,
     dark: bool = false,
@@ -50,6 +81,10 @@ const Window = struct {
     pixels: []u32 = &.{},
     buf_w: i32 = 0,
     buf_h: i32 = 0,
+    /// The picture's identity for a GPU renderer: a new id for each new
+    /// buffer, a new version each time it is drawn.
+    image_id: u64 = 0,
+    version: u64 = 0,
     content: Size = .{ .w = 0, .h = 0 },
     dirty: bool = true,
 
@@ -93,6 +128,30 @@ const Window = struct {
     closing: bool = false,
     /// The state last told to the surface (focused, maximized, ...).
     told_state: u8 = 0xff,
+
+    /// Who the window belongs to: the client's process and binary (owned;
+    /// empty for Kuroko's own in-process apps and before the client
+    /// comes).
+    pid: i32 = 0,
+    exe: []u8 = &.{},
+    /// The object open in the window (a file), when known; owned.
+    object: []u8 = &.{},
+    app_trust: Trust = .unknown,
+    trust: Trust = .unknown,
+
+    fn image(w: *const Window) tw.Image {
+        return .{ .pixels = w.pixels, .w = w.buf_w, .h = w.buf_h, .id = w.image_id, .version = w.version };
+    }
+
+    /// Draws the app's content into the window's buffer if it changed.
+    fn paint(w: *Window, scale: i32) void {
+        const s = w.surface orelse return;
+        if (!w.dirty or w.pixels.len == 0) return;
+        var wc = Canvas.init(w.pixels, w.buf_w, w.buf_h, w.buf_w, scale);
+        s.draw(&wc);
+        w.dirty = false;
+        w.version += 1;
+    }
 };
 
 const anim_ms = 200;
@@ -105,6 +164,9 @@ const space_ms = 250;
 /// A drag out of the panel released this fast is a "quick drag": the window
 /// goes next to the panel, whatever the drop point.
 const quick_drag_ms = 300;
+/// While reordering, the pointer rests this long on a tile before its
+/// window moves aside, so tiles only crossed on the way stay put.
+const reorder_dwell_ms = 120;
 /// Two clicks within this time are a double click.
 const double_click_ms = 400;
 /// The outline that travels from an icon to the window it brings up.
@@ -121,6 +183,9 @@ const Ghost = struct {
     pixels: []u32,
     buf_w: i32,
     buf_h: i32,
+    /// The window's picture identity, kept: a GPU renderer still has it.
+    image_id: u64,
+    version: u64,
     frame: Rect,
     /// Where the content sits inside the frame (title bar above it).
     content: Rect,
@@ -220,10 +285,26 @@ const PanelMenu = struct {
 /// Buttons on the enlarged preview of a panel window.
 pub const PreviewButton = enum(u8) { close, restore, maximize, fullscreen, minimize };
 
+fn sameHandle(a: ?Handle, b: ?Handle) bool {
+    if (a == null or b == null) return a == null and b == null;
+    return a.?.eql(b.?);
+}
+
 const Drag = union(enum) {
     none,
-    /// Press on the title bar; becomes a reorder once it moves.
-    title: struct { h: Handle, x: f32, y: f32, moved: bool },
+    /// Press on the title bar; becomes a reorder once it moves. `want` is
+    /// the window whose tile the pointer is on (since `want_since`);
+    /// `partner` the one already swapped with the dragged window, as a
+    /// preview of the drop.
+    title: struct {
+        h: Handle,
+        x: f32,
+        y: f32,
+        moved: bool,
+        want: ?Handle = null,
+        want_since: i64 = 0,
+        partner: ?Handle = null,
+    },
     /// Dragging a shared border: the boundary follows the pointer from
     /// where it was grabbed.
     col_border: struct { row: u8, start: f32, boundary: f32 },
@@ -274,6 +355,8 @@ pub const Compositor = struct {
     recent: std.ArrayList(usize) = .empty,
 
     windows: core.Registry(Window),
+    /// Last picture id given to a window buffer (Window.image_id).
+    image_seq: u64 = 0,
     tiles: std.ArrayList(Handle) = .empty,
     shelf: std.ArrayList(Handle) = .empty,
     focused: ?Handle = null,
@@ -300,6 +383,12 @@ pub const Compositor = struct {
     mods: core.input.Mods = .{},
     content_hover: ?Handle = null,
     drag: Drag = .none,
+    /// The tiles when a reorder began: the pointer is tested against them,
+    /// not the previewed layout, so a swap that moves the borders cannot
+    /// flip the target back and forth.
+    reorder_slots: [tiling.max_windows]tiling.Slot = undefined,
+    reorder_tiles: [tiling.max_windows]Handle = undefined,
+    reorder_n: usize = 0,
     tracker: core.wheel.Tracker = .{},
     cursor: core.input.Cursor = .arrow,
 
@@ -331,6 +420,25 @@ pub const Compositor = struct {
     publisher: Publisher,
     scratch: std.ArrayList(u8) = .empty,
     full_redraw: bool = true,
+    /// The user's trust marks, from txdesk (DeskTrust), plus marks set here
+    /// that txdesk has not confirmed yet.
+    marks: core.trust.Marks,
+
+    /// The launcher's Focus and Recent, from txdesk's influence file. Read
+    /// when the launcher opens after txdesk said it changed. Without it,
+    /// Focus is empty and Recent is this session's launches (`recent`).
+    state_reader: ?StateReader = null,
+    influence_bytes: []u8 = &.{},
+    influence: core.influence.Decoded = .{},
+    influence_ok: bool = false,
+    influence_stale: bool = true,
+    /// Wall clock (Unix seconds), from the backend; 0 when unknown.
+    wall_s: i64 = 0,
+    /// App icons as pixels (txdesk's icons.krkde); read again when txdesk
+    /// says they changed. `icon_ids` are the GPU picture ids, one per icon.
+    icons: core.icons.Set,
+    icon_ids: std.ArrayList(u64) = .empty,
+    icons_stale: bool = true,
 
     pub fn init(gpa: std.mem.Allocator, apps: []const AppEntry, screen: Size, scale: i32, params: Params) !*Compositor {
         const c = try gpa.create(Compositor);
@@ -352,6 +460,8 @@ pub const Compositor = struct {
             .stats = stats,
             .windows = core.Registry(Window).init(gpa),
             .publisher = Publisher.init(gpa),
+            .marks = .init(gpa),
+            .icons = .init(gpa),
         };
         return c;
     }
@@ -374,6 +484,11 @@ pub const Compositor = struct {
         self.spaces.deinit(self.gpa);
         self.recent.deinit(self.gpa);
         self.scratch.deinit(self.gpa);
+        self.marks.deinit();
+        self.influence.deinit(self.gpa);
+        self.icons.deinit();
+        self.icon_ids.deinit(self.gpa);
+        self.gpa.free(self.influence_bytes);
         self.publisher.deinit();
         self.app_infos.deinit(self.gpa);
         self.installed.deinit();
@@ -387,6 +502,27 @@ pub const Compositor = struct {
         @memcpy(self.clock[0..n], text[0..n]);
         self.clock_len = n;
         self.full_redraw = true;
+    }
+
+    /// "Pause learning" (top bar, control center): the recorder stops while
+    /// learning is off.
+    pub fn setLearning(self: *Compositor, on: bool) void {
+        if (self.learning == on) return;
+        self.learning = on;
+        self.full_redraw = true;
+        if (self.publisher.subscriberCount() == 0) return;
+        self.scratch.clearRetainingCapacity();
+        self.sessionRecord(&self.scratch);
+        self.publisher.broadcast(self.scratch.items);
+    }
+
+    fn sessionRecord(self: *Compositor, out: *std.ArrayList(u8)) void {
+        core.format.appendStruct(self.gpa, out, core.types.scene_session, 1, core.types.SceneSession{ .learning = @intFromBool(self.learning) }, "") catch {};
+    }
+
+    /// The wall clock, Unix seconds (the launcher's "5 min ago").
+    pub fn setWallTime(self: *Compositor, unix_s: i64) void {
+        self.wall_s = unix_s;
     }
 
     pub fn setScreen(self: *Compositor, size: Size, scale: i32, now: i64) void {
@@ -571,6 +707,8 @@ pub const Compositor = struct {
             .pixels = w.pixels,
             .buf_w = w.buf_w,
             .buf_h = w.buf_h,
+            .image_id = w.image_id,
+            .version = w.version,
             .frame = frame,
             .content = content,
             .chrome_bar = bar,
@@ -606,7 +744,7 @@ pub const Compositor = struct {
             const cr = Rect{ .x = sx(cx, gh.content.x, k), .y = sx(cy, gh.content.y, k), .w = @max(1, sx(cx, gh.content.right(), k) - sx(cx, gh.content.x, k)), .h = @max(1, sx(cy, gh.content.bottom(), k) - sx(cy, gh.content.y, k)) };
             const alpha: u8 = @intFromFloat(255 * (1 - t * t));
             if (gh.chrome_bar) cv.fillRect(fr, th.get(.chrome).fade(1 - t * t));
-            if (gh.pixels.len > 0) cv.blitScaled(gh.pixels, gh.buf_w, gh.buf_h, cr, alpha);
+            if (gh.pixels.len > 0) cv.blitScaled(.{ .pixels = gh.pixels, .w = gh.buf_w, .h = gh.buf_h, .id = gh.image_id, .version = gh.version }, cr, alpha);
             cv.hairlineRect(fr, th.get(.border).fade(1 - t));
         }
     }
@@ -618,6 +756,10 @@ pub const Compositor = struct {
             g.ptr.surface = null;
             self.gpa.free(g.ptr.pixels);
             g.ptr.pixels = &.{};
+            self.gpa.free(g.ptr.exe);
+            g.ptr.exe = &.{};
+            self.gpa.free(g.ptr.object);
+            g.ptr.object = &.{};
         }
         self.windows.destroy(h);
     }
@@ -1014,6 +1156,9 @@ pub const Compositor = struct {
         w.pixels = px;
         w.buf_w = bw;
         w.buf_h = bh;
+        self.image_seq += 1;
+        w.image_id = self.image_seq;
+        w.version = 0;
         if (w.surface) |s| s.configure(size, self.scale);
         w.dirty = true;
     }
@@ -1026,11 +1171,7 @@ pub const Compositor = struct {
             const opt = s.optimalSize();
             self.sizeContent(w, .{ .w = @max(opt.w, 320), .h = @max(@min(opt.h, 800), 120) });
         }
-        if (w.dirty and w.pixels.len > 0) {
-            var wc = Canvas.init(w.pixels, w.buf_w, w.buf_h, w.buf_w, self.scale);
-            s.draw(&wc);
-            w.dirty = false;
-        }
+        w.paint(self.scale);
     }
 
     /// Fills `r` with the window's picture, scaled to cover it: the whole
@@ -1044,7 +1185,7 @@ pub const Compositor = struct {
         const full = Rect{ .x = r.x, .y = r.y, .w = @intFromFloat(@ceil(sw * k)), .h = @intFromFloat(@ceil(sh * k)) };
         const old = cv.pushClip(r);
         defer cv.popClip(old);
-        cv.blitScaled(w.pixels, w.buf_w, w.buf_h, full, 255);
+        cv.blitScaled(w.image(), full, 255);
     }
 
     /// Where a window's content is on screen.
@@ -1204,6 +1345,10 @@ pub const Compositor = struct {
                     self.full_redraw = true;
                     return;
                 }
+                if (self.drag == .title and k.pressed and k.key == .escape) {
+                    self.cancelReorder(now);
+                    return;
+                }
                 if (self.chooser != null and k.pressed and k.key == .escape) {
                     self.chooser = null;
                     self.full_redraw = true;
@@ -1236,7 +1381,7 @@ pub const Compositor = struct {
             .wheel => |w0| {
                 if (self.launcher.open) return;
                 var w = w0;
-                // Tesselix's own direction defaults, per device type.
+                // Kuroko's own direction defaults, per device type.
                 const natural = if (w.source == .touchpad) self.params.touchpad_natural else self.params.wheel_natural;
                 if (natural) {
                     w.dy = -w.dy;
@@ -1282,7 +1427,7 @@ pub const Compositor = struct {
         _ = now;
         switch (row) {
             .dark => self.setDark(!self.theme.dark),
-            .learning => self.learning = !self.learning,
+            .learning => self.setLearning(!self.learning),
             .wheel_natural => self.params.wheel_natural = !self.params.wheel_natural,
             .touchpad_natural => self.params.touchpad_natural = !self.params.touchpad_natural,
         }
@@ -1312,7 +1457,10 @@ pub const Compositor = struct {
         } else {
             const px = if (self.px < 0) @as(f32, @floatFromInt(self.screen.w)) / 2 else self.px;
             const py = if (self.py < 0) @as(f32, @floatFromInt(self.screen.h)) / 2 else self.py;
-            self.launcher.show(.{ .x = 0, .y = 0, .w = self.screen.w, .h = self.screen.h }, px, py, self.app_infos.items, self.recent.items, now);
+            var focus_list: [core.influence.max_per_list]shell.Pick = undefined;
+            var recent_list: [core.influence.max_per_list]shell.Pick = undefined;
+            const lists = self.launcherLists(&focus_list, &recent_list);
+            self.launcher.show(.{ .x = 0, .y = 0, .w = self.screen.w, .h = self.screen.h }, px, py, self.app_infos.items, focus_list[0..lists.focus], recent_list[0..lists.recent], self.wall_s, now);
         }
         self.full_redraw = true;
     }
@@ -1412,18 +1560,19 @@ pub const Compositor = struct {
         self.publishWindow(h, .opened);
     }
 
-    /// The environment of the apps Tesselix starts (WAYLAND_DISPLAY of its
+    /// The environment of the apps Kuroko starts (WAYLAND_DISPLAY of its
     /// own server, ...): "NAME=value" sets, "NAME" removes.
     pub fn setChildEnv(self: *Compositor, env: []const []const u8) void {
         self.child_env = env;
     }
 
-    /// A window from an app outside Tesselix (a Wayland client). It takes
+    /// A window from an app outside Kuroko (a Wayland client). It takes
     /// the place of its app's launch placeholder when there is one;
     /// otherwise it opens like any new window. The app is found by its
     /// binary in the registry, then by its app id.
-    pub fn adoptWindow(self: *Compositor, s: Surface, exe: []const u8, now: i64) void {
+    pub fn adoptWindow(self: *Compositor, s: Surface, client: Client, now: i64) void {
         defer self.windows.endEvent();
+        const exe = client.exe;
         const app = self.appForClient(exe, s.appId());
         s.setDark(self.theme.dark);
         var hs: std.ArrayList(Handle) = .empty;
@@ -1438,6 +1587,8 @@ pub const Compositor = struct {
             w.waiting = false;
             w.status = .{};
             w.dirty = true;
+            self.setClient(w, client);
+            self.refreshTrustLocked(h, w);
             if (w.content.w > 0) s.configure(w.content, self.scale);
             self.full_redraw = true;
             return;
@@ -1453,6 +1604,10 @@ pub const Compositor = struct {
             s.destroy();
             return;
         };
+        if (self.windows.acquire(h)) |g| {
+            defer g.release();
+            self.setClient(g.ptr, client);
+        }
         self.openNew(h, app, now) catch {};
     }
 
@@ -1473,6 +1628,11 @@ pub const Compositor = struct {
 
     pub fn syncInstalledForTest(self: *Compositor) void {
         self.syncInstalled();
+    }
+
+    /// A record as if txdesk had sent it (tests).
+    pub fn deskRecordForTest(self: *Compositor, rec: core.format.Record) void {
+        self.onDeskRecord(rec);
     }
 
     fn appName(self: *const Compositor, app: usize) []const u8 {
@@ -1501,15 +1661,257 @@ pub const Compositor = struct {
 
     /// A record from txdesk: the app registry.
     fn onDeskRecord(self: *Compositor, rec: core.format.Record) void {
+        if (rec.type_id == core.types.desk_trust) return self.applyTrustRecord(rec);
+        if (rec.type_id == core.types.desk_notice) {
+            const m = core.format.readStruct(core.types.DeskNotice, rec);
+            if (m.kind == .influence_changed) self.influence_stale = true;
+            if (m.kind == .icons_changed) self.icons_stale = true;
+            return;
+        }
         const res = self.installed.apply(rec) catch return;
         switch (res) {
             .none => {},
             .changed => {
                 if (self.installed.last_save != null) self.apps_asked = false;
                 self.syncInstalled();
+                // An app installed or removed changes its windows' trust.
+                self.refreshAllTrust();
             },
             .need_snapshot => self.askForApps(),
         }
+    }
+
+    // -------------------------------------------------- focus and recent
+
+    /// Reads the influence file if txdesk said it changed. A missing or
+    /// broken file means none: the simple session list is used instead.
+    fn refreshInfluence(self: *Compositor) void {
+        if (!self.influence_stale) return;
+        const r = self.state_reader orelse return;
+        self.influence_stale = false;
+        self.influence_ok = false;
+        self.gpa.free(self.influence_bytes);
+        self.influence_bytes = &.{};
+        self.influence.picks.clearRetainingCapacity();
+        const bytes = r.read(r.ctx, self.gpa, "focus.krkde") orelse return;
+        self.influence_bytes = bytes;
+        core.influence.decode(self.gpa, bytes, &self.influence) catch return;
+        self.influence_ok = true;
+    }
+
+    /// Reads the icons if txdesk said they changed, and gives each app its
+    /// icon.
+    fn refreshIcons(self: *Compositor) void {
+        if (!self.icons_stale) return;
+        const r = self.state_reader orelse return;
+        self.icons_stale = false;
+        const bytes = r.read(r.ctx, self.gpa, "icons.krkde") orelse return;
+        defer self.gpa.free(bytes);
+        self.icons.decode(bytes) catch return;
+        self.icon_ids.clearRetainingCapacity();
+        for (self.icons.icons.items) |_| {
+            self.image_seq += 1;
+            self.icon_ids.append(self.gpa, self.image_seq) catch return;
+        }
+        self.syncInstalled();
+    }
+
+    fn iconFor(self: *const Compositor, key: []const u8) chrome.Icon {
+        var out: chrome.Icon = .{};
+        for (self.icons.icons.items, 0..) |*ic, i| {
+            if (!std.mem.eql(u8, ic.key, key) or i >= self.icon_ids.items.len) continue;
+            const img: tw.Image = .{ .pixels = ic.pixels, .w = ic.w, .h = ic.h, .id = self.icon_ids.items[i] };
+            if (ic.w <= 64) out.small = img else out.large = img;
+        }
+        return out;
+    }
+
+    fn appIcon(self: *const Compositor, app: usize) chrome.Icon {
+        if (app < self.app_infos.items.len) return self.app_infos.items[app].icon;
+        return .{};
+    }
+
+    /// The launcher index of an influence reference: an installed app by
+    /// its binary, or one of Kuroko's own apps by its app id. Unknown
+    /// references are dropped (references, not free content).
+    fn resolveApp(self: *const Compositor, ref: []const u8) ?usize {
+        for (self.apps, 0..) |a, i| {
+            if (std.mem.eql(u8, a.app_id, ref)) return i;
+        }
+        for (self.installed.entries.items, 0..) |e, i| {
+            if (std.mem.eql(u8, e.key, ref)) return self.apps.len + i;
+        }
+        return null;
+    }
+
+    /// Focus and Recent for the launcher, at the moment it opens.
+    fn launcherLists(self: *Compositor, focus_out: []shell.Pick, recent_out: []shell.Pick) struct { focus: usize, recent: usize } {
+        self.refreshInfluence();
+        var nf: usize = 0;
+        var nr: usize = 0;
+        if (self.influence_ok) {
+            for (self.influence.picks.items) |p| {
+                const app = self.resolveApp(p.app) orelse continue;
+                const pick: shell.Pick = .{ .app = app, .reason = p.reason, .value = p.value };
+                switch (p.list) {
+                    .focus => if (nf < focus_out.len) {
+                        focus_out[nf] = pick;
+                        nf += 1;
+                    },
+                    .recent => if (nr < recent_out.len) {
+                        recent_out[nr] = pick;
+                        nr += 1;
+                    },
+                    _ => {},
+                }
+            }
+            return .{ .focus = nf, .recent = nr };
+        }
+        // No predictor: this session's launches, newest first.
+        for (self.recent.items) |a| {
+            if (nr == recent_out.len) break;
+            recent_out[nr] = .{ .app = a };
+            nr += 1;
+        }
+        return .{ .focus = 0, .recent = nr };
+    }
+
+    // ------------------------------------------------------------- trust
+
+    fn setClient(self: *Compositor, w: *Window, client: Client) void {
+        w.pid = client.pid;
+        self.gpa.free(w.exe);
+        w.exe = self.gpa.dupe(u8, client.exe) catch &.{};
+    }
+
+    /// A mark from txdesk. A snapshot replaces all marks; windows are
+    /// decided again at its end, or at once for a single change.
+    fn applyTrustRecord(self: *Compositor, rec: core.format.Record) void {
+        if (rec.swapped) return;
+        const m = core.format.readStruct(core.types.DeskTrust, rec);
+        const path = core.format.trailing(core.types.DeskTrust, rec);
+        switch (m.kind) {
+            .snapshot_begin => {
+                self.marks.clearAll();
+                return;
+            },
+            .snapshot_end => {},
+            .mark => {
+                if (m.path_len != path.len or path.len == 0) return;
+                _ = self.marks.set(.{ .subject = m.subject, .level = m.level, .path = path }) catch return;
+            },
+            .cleared => {
+                if (m.path_len != path.len) return;
+                _ = self.marks.clear(m.subject, path);
+            },
+            _ => return,
+        }
+        self.refreshAllTrust();
+    }
+
+    /// The app part of a window's trust. Kuroko's own apps are trusted.
+    /// An installed app counts only when the window's binary is the one
+    /// the registry lists: a client that only claims an app id does not
+    /// inherit the app's trust.
+    fn appTrust(self: *const Compositor, w: *const Window) Trust {
+        if (w.app < self.apps.len) return .trusted;
+        const i = w.app - self.apps.len;
+        if (i >= self.installed.entries.items.len) return self.marks.appLevel(w.exe, false);
+        const e = &self.installed.entries.items[i];
+        const exe = if (w.exe.len > 0) w.exe else e.key;
+        const listed = e.status == .installed and std.mem.eql(u8, exe, e.key);
+        return self.marks.appLevel(exe, listed);
+    }
+
+    fn decideTrust(self: *const Compositor, w: *Window) bool {
+        const app = self.appTrust(w);
+        const both = core.trust.combine(app, self.marks.objectLevel(w.object));
+        const changed = app != w.app_trust or both != w.trust;
+        w.app_trust = app;
+        w.trust = both;
+        return changed;
+    }
+
+    fn refreshTrustLocked(self: *Compositor, h: Handle, w: *Window) void {
+        if (!self.decideTrust(w)) return;
+        if (self.publisher.subscriberCount() == 0) return;
+        self.scratch.clearRetainingCapacity();
+        self.identityRecord(&self.scratch, h, w);
+        self.publisher.broadcast(self.scratch.items);
+    }
+
+    fn refreshAllTrust(self: *Compositor) void {
+        var hs: std.ArrayList(Handle) = .empty;
+        defer hs.deinit(self.gpa);
+        self.windows.handles(&hs, self.gpa) catch return;
+        for (hs.items) |h| {
+            const g = self.windows.acquire(h) orelse continue;
+            defer g.release();
+            self.refreshTrustLocked(h, g.ptr);
+        }
+    }
+
+    /// A window's trust, as decided now.
+    pub fn trustOf(self: *Compositor, h: Handle) ?WindowTrust {
+        const g = self.windows.acquire(h) orelse return null;
+        defer g.release();
+        const w = g.ptr;
+        _ = self.decideTrust(w);
+        const exe: []const u8 = if (w.exe.len > 0) w.exe else if (w.app >= self.apps.len and w.app - self.apps.len < self.installed.entries.items.len) self.installed.entries.items[w.app - self.apps.len].key else "";
+        return .{ .app = w.app_trust, .window = w.trust, .pid = w.pid, .exe = exe, .object = w.object };
+    }
+
+    /// The object open in a window (a file path; "" when none is known).
+    /// Its trust joins the app's.
+    pub fn setWindowObject(self: *Compositor, h: Handle, path: []const u8) void {
+        const g = self.windows.acquire(h) orelse return;
+        defer g.release();
+        const w = g.ptr;
+        if (std.mem.eql(u8, w.object, path)) return;
+        const copy = self.gpa.dupe(u8, path) catch return;
+        self.gpa.free(w.object);
+        w.object = copy;
+        self.refreshTrustLocked(h, w);
+    }
+
+    /// The user sets (`level`) or takes back (null) a mark: the window's
+    /// Security menu. It applies at once; txdesk saves it and confirms.
+    pub fn requestTrust(self: *Compositor, subject: core.types.TrustSubject, path: []const u8, level: ?Trust) void {
+        if (path.len == 0 or path[0] != '/') return;
+        if (level) |l| {
+            _ = self.marks.set(.{ .subject = subject, .level = l, .path = path }) catch return;
+        } else _ = self.marks.clear(subject, path);
+        var rec: std.ArrayList(u8) = .empty;
+        defer rec.deinit(self.gpa);
+        core.format.appendStruct(self.gpa, &rec, core.types.trust_request, 1, core.types.TrustRequest{
+            .action = if (level == null) .clear else .set,
+            .subject = subject,
+            .level = level orelse .unknown,
+            .path_len = @intCast(path.len),
+        }, path) catch return;
+        self.publisher.sendControl(rec.items);
+        self.refreshAllTrust();
+    }
+
+    /// Marks the app of a window (its binary). Kuroko's own apps are
+    /// always trusted and cannot be marked.
+    pub fn markWindowApp(self: *Compositor, h: Handle, level: ?Trust) void {
+        const t = self.trustOf(h) orelse return;
+        if (t.exe.len == 0) return;
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        if (t.exe.len > buf.len) return;
+        @memcpy(buf[0..t.exe.len], t.exe);
+        self.requestTrust(.app, buf[0..t.exe.len], level);
+    }
+
+    /// Marks the object open in a window.
+    pub fn markWindowObject(self: *Compositor, h: Handle, level: ?Trust) void {
+        const t = self.trustOf(h) orelse return;
+        if (t.object.len == 0) return;
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        if (t.object.len > buf.len) return;
+        @memcpy(buf[0..t.object.len], t.object);
+        self.requestTrust(.file, buf[0..t.object.len], level);
     }
 
     fn askForApps(self: *Compositor) void {
@@ -1531,6 +1933,7 @@ pub const Compositor = struct {
             info.hidden = !e.shown();
             info.missing = e.status == .missing;
             info.update = e.update;
+            info.icon = self.iconFor(e.key);
         }
         self.full_redraw = true;
     }
@@ -1842,7 +2245,7 @@ pub const Compositor = struct {
                 const fw: i32 = @intFromFloat(sw * k);
                 const fh: i32 = @intFromFloat(sh * k);
                 const fit = Rect{ .x = body.x + @divTrunc(body.w - fw, 2), .y = body.y + @divTrunc(body.h - fh, 2), .w = fw, .h = fh };
-                cv.blitScaled(w.pixels, w.buf_w, w.buf_h, fit, @intFromFloat(255 * alpha));
+                cv.blitScaled(w.image(), fit, @intFromFloat(255 * alpha));
             }
             cv.strokeRoundRect(r, 12, if (hot_cell) 3 else 2, th.get(.accent).fade(if (hot_cell or p.n == 1) 1 else 0.5));
             if (t < 0.9) continue;
@@ -2002,7 +2405,7 @@ pub const Compositor = struct {
                 defer g.release();
                 self.ensureDrawn(g.ptr);
                 cv.fillRect(sr, th.get(.surface_alt));
-                if (g.ptr.pixels.len > 0) cv.blitScaled(g.ptr.pixels, g.ptr.buf_w, g.ptr.buf_h, sr, 255);
+                if (g.ptr.pixels.len > 0) cv.blitScaled(g.ptr.image(), sr, 255);
                 const name = if (g.ptr.surface) |sf| sf.title() else self.appName(g.ptr.app);
                 var lb: [80]u8 = undefined;
                 const label = std.fmt.bufPrint(&lb, "{d}. {s} \u{00B7} {s}", .{ i + 1, name, self.whereIs(g.ptr) }) catch name;
@@ -2120,7 +2523,20 @@ pub const Compositor = struct {
                 return;
             },
             .title => |*d| {
-                if (@abs(x - d.x) + @abs(y - d.y) > 5) d.moved = true;
+                if (!d.moved and @abs(x - d.x) + @abs(y - d.y) > 5) {
+                    d.moved = true;
+                    const vis = self.visibleTiles();
+                    self.reorder_n = @min(self.slot_count, vis.len);
+                    @memcpy(self.reorder_slots[0..self.reorder_n], self.slots[0..self.reorder_n]);
+                    @memcpy(self.reorder_tiles[0..self.reorder_n], vis[0..self.reorder_n]);
+                }
+                if (d.moved) {
+                    const want = self.reorderTarget(d.h, x, y);
+                    if (!sameHandle(want, d.want)) {
+                        d.want = want;
+                        d.want_since = now;
+                    }
+                }
                 self.cursor = if (d.moved) .grab else .arrow;
                 self.full_redraw = true;
                 return;
@@ -2378,7 +2794,7 @@ pub const Compositor = struct {
         }
         switch (top) {
             .learning => {
-                self.learning = !self.learning;
+                self.setLearning(!self.learning);
                 return;
             },
             .apps => {
@@ -2471,39 +2887,100 @@ pub const Compositor = struct {
                     if (from) |f| self.startCue(p.h, f, now);
                 }
             },
-            .title => |t| {
-                if (!t.moved) return;
+            .title => |t0| {
+                if (!t0.moved) return;
+                var t = t0;
                 // Dropped on the panel: minimize.
                 if (x < @as(f32, @floatFromInt(self.panelW())) and y > shell.top_bar_h) {
+                    self.previewSwap(&t, null, now);
                     self.shelve(t.h, now);
                     return;
                 }
-                // Dropping a window on another tile swaps the two windows.
-                const target = self.tileAt(x, y) orelse return;
-                if (target.eql(t.h)) return;
-                var ia: ?usize = null;
-                var ib: ?usize = null;
-                for (self.tiles.items, 0..) |h, i| {
-                    if (h.eql(t.h)) ia = i;
-                    if (h.eql(target)) ib = i;
-                }
-                if (ia != null and ib != null) {
-                    std.mem.swap(Handle, &self.tiles.items[ia.?], &self.tiles.items[ib.?]);
-                    self.relayout(now, true);
-                }
+                // Dropping a window on another tile swaps the two windows
+                // (the preview may not have caught up with a fast drop).
+                self.previewSwap(&t, self.reorderTarget(t.h, x, y), now);
+                self.landFromThumb(t.h, now);
             },
             else => {},
         }
         self.cursor = .arrow;
     }
 
-    /// The window whose tile (allocated area) contains the point.
-    fn tileAt(self: *Compositor, x: f32, y: f32) ?Handle {
-        const vis = self.visibleTiles();
-        for (self.slots[0..self.slot_count], 0..) |sl, i| {
-            if (i < vis.len and sl.slot.contains(x, y)) return vis[i];
+    /// The window a reordered window `h` would swap with when dropped at
+    /// (x, y): the owner of that point's tile when the drag began. Its own
+    /// tile, and anywhere outside the tiles, is no target.
+    fn reorderTarget(self: *const Compositor, h: Handle, x: f32, y: f32) ?Handle {
+        for (self.reorder_slots[0..self.reorder_n], self.reorder_tiles[0..self.reorder_n]) |sl, th| {
+            if (!sl.slot.contains(x, y)) continue;
+            if (th.eql(h) or !contains(self.tiles.items, th)) return null;
+            return th;
         }
         return null;
+    }
+
+    /// Shows the drop before it happens: undoes the swap with the previous
+    /// partner and swaps the dragged window with `to`. Both windows move
+    /// to their new tiles with the usual animation.
+    fn previewSwap(self: *Compositor, d: anytype, to: ?Handle, now: i64) void {
+        if (sameHandle(d.partner, to)) return;
+        if (d.partner) |p| self.swapTiles(d.h, p);
+        if (to) |t| self.swapTiles(d.h, t);
+        d.partner = to;
+        self.relayout(now, true);
+    }
+
+    fn swapTiles(self: *Compositor, a: Handle, b: Handle) void {
+        var ia: ?usize = null;
+        var ib: ?usize = null;
+        for (self.tiles.items, 0..) |h, i| {
+            if (h.eql(a)) ia = i;
+            if (h.eql(b)) ib = i;
+        }
+        if (ia != null and ib != null) std.mem.swap(Handle, &self.tiles.items[ia.?], &self.tiles.items[ib.?]);
+    }
+
+    /// Escape during a reorder: everything goes back where it was.
+    fn cancelReorder(self: *Compositor, now: i64) void {
+        var d = self.drag.title;
+        self.drag = .none;
+        self.cursor = .arrow;
+        self.previewSwap(&d, null, now);
+        if (d.moved) self.landFromThumb(d.h, now);
+        self.full_redraw = true;
+    }
+
+    /// The window dragged by its title bar lands in its tile from the
+    /// thumbnail under the pointer.
+    fn landFromThumb(self: *Compositor, h: Handle, now: i64) void {
+        const g = self.windows.acquire(h) orelse return;
+        defer g.release();
+        g.ptr.from = RectF.from(self.dragThumbRect());
+        g.ptr.anim_start = now;
+    }
+
+    /// The thumbnail that follows the pointer while a window is dragged.
+    fn dragThumbRect(self: *const Compositor) Rect {
+        const w: i32 = 200;
+        const h: i32 = 130;
+        return .{ .x = @as(i32, @intFromFloat(self.px)) - @divTrunc(w, 2), .y = @as(i32, @intFromFloat(self.py)) - 16, .w = w, .h = h };
+    }
+
+    fn drawDragThumb(self: *Compositor, cv: *Canvas, w: *Window) void {
+        const th = &self.theme;
+        const thumb = self.dragThumbRect();
+        cv.fillRect(thumb.translate(0, 4), th.get(.shadow));
+        cv.fillRect(thumb, th.get(.surface));
+        if (w.pixels.len > 0) cv.blitScaled(w.image(), thumb, 255);
+        cv.strokeRect(thumb, 2, th.get(.accent));
+    }
+
+    /// The window being reordered, once the drag has moved: it is drawn as
+    /// a thumbnail under the pointer and a placeholder in its tile.
+    fn reordering(self: *const Compositor) ?Handle {
+        return switch (self.drag) {
+            .title => |d| if (d.moved) d.h else null,
+            else => null,
+        };
     }
 
     /// Where a window dropped at (x, y) joins the tiles: before the tile
@@ -2747,6 +3224,16 @@ pub const Compositor = struct {
         defer self.windows.endEvent();
         var need = self.full_redraw;
 
+        // Reorder: once the pointer has rested on a tile, its window moves
+        // aside into the dragged window's tile.
+        switch (self.drag) {
+            .title => |*d| if (d.moved and !sameHandle(d.want, d.partner)) {
+                if (now - d.want_since >= reorder_dwell_ms * ms) self.previewSwap(d, d.want, now);
+                need = true;
+            },
+            else => {},
+        }
+
         var hs: std.ArrayList(Handle) = .empty;
         defer hs.deinit(self.gpa);
         self.windows.handles(&hs, self.gpa) catch {};
@@ -2841,6 +3328,7 @@ pub const Compositor = struct {
 
         if (self.publisher.poll()) self.sendSnapshot();
         self.publisher.receive(self, onDeskRecord);
+        self.refreshIcons();
         self.publisher.flush();
         self.windows.collect(null);
         return need;
@@ -2886,7 +3374,7 @@ pub const Compositor = struct {
                     const menu = if (g.ptr.surface) |s| s.menu() else &[_][]const u8{};
                     const frame = self.chromeFrame(g.ptr, now);
                     cv.fillRect(frame.translate(0, 3), self.theme.get(.shadow));
-                    chrome.drawTitleBar(cv, &self.theme, frame, self.chromeState(g.ptr, now), title, self.appName(g.ptr.app), menu);
+                    chrome.drawTitleBar(cv, &self.theme, frame, self.chromeState(g.ptr, now), title, self.appName(g.ptr.app), self.appIcon(g.ptr.app), menu);
                     self.drawSpaceDots(cv, true, now);
                 }
             }
@@ -2950,7 +3438,10 @@ pub const Compositor = struct {
         }
 
         self.drawDividers(cv, false);
-        for (self.visibleTiles()) |wh| self.drawWindow(cv, wh, now);
+        const lifted = self.reordering();
+        for (self.visibleTiles()) |wh| {
+            if (!sameHandle(lifted, wh)) self.drawWindow(cv, wh, now);
+        }
         self.drawDividers(cv, true);
         self.drawShelf(cv, now);
         self.drawFlying(cv, now);
@@ -2972,19 +3463,13 @@ pub const Compositor = struct {
         const g = self.windows.acquire(h) orelse return;
         defer g.release();
         const w = g.ptr;
-        if (w.surface) |s| {
-            if (w.dirty and w.pixels.len > 0) {
-                var wc = Canvas.init(w.pixels, w.buf_w, w.buf_h, w.buf_w, self.scale);
-                s.draw(&wc);
-                w.dirty = false;
-            }
-        }
+        w.paint(self.scale);
         cv.fillRect(r, self.theme.get(.surface));
         if (w.pixels.len == 0) return;
         if (r.w == w.content.w and r.h == w.content.h) {
-            cv.blit(w.pixels, w.buf_w, w.buf_h, r.x * self.scale, r.y * self.scale);
+            cv.blit(w.image(), r.x * self.scale, r.y * self.scale);
         } else {
-            cv.blitScaled(w.pixels, w.buf_w, w.buf_h, r, 255);
+            cv.blitScaled(w.image(), r, 255);
         }
     }
 
@@ -2997,21 +3482,17 @@ pub const Compositor = struct {
         const content = contentRect(frame);
         const app_name = self.appName(w.app);
 
-        if (w.surface) |s| {
-            if (w.dirty and w.pixels.len > 0) {
-                var wc = Canvas.init(w.pixels, w.buf_w, w.buf_h, w.buf_w, self.scale);
-                s.draw(&wc);
-                w.dirty = false;
-            }
+        if (w.surface != null) {
+            w.paint(self.scale);
             const old = cv.pushClip(content);
-            cv.blit(w.pixels, w.buf_w, w.buf_h, content.x * self.scale, content.y * self.scale);
+            cv.blit(w.image(), content.x * self.scale, content.y * self.scale);
             cv.popClip(old);
         } else {
             // Launch placeholder: icon and name on the theme background.
             cv.fillRect(content, th.get(.surface));
             const fade = std.math.clamp(@as(f32, @floatFromInt(now - w.launch_start)) / @as(f32, @floatFromInt(200 * ms)), 0, 1);
             const icon = Rect{ .x = content.x + @divTrunc(content.w - 64, 2), .y = content.y + @divTrunc(content.h, 2) - 60, .w = 64, .h = 64 };
-            chrome.drawAppIcon(cv, th, icon, app_name, .title);
+            chrome.drawAppIcon(cv, th, icon, app_name, .title, self.appIcon(w.app));
             if (fade < 1) cv.fillRect(icon.inset(-2), th.get(.surface).fade(1 - fade));
             const m = tw.font.Metrics.of(.{ .size = .large }, self.scale);
             _ = cv.text(@as(f32, @floatFromInt(content.x)) + (@as(f32, @floatFromInt(content.w)) - m.width(app_name)) / 2, @floatFromInt(icon.bottom() + 14), app_name, .{ .size = .large }, th.get(.text_dim).fade(fade));
@@ -3019,7 +3500,7 @@ pub const Compositor = struct {
 
         const title = if (w.surface) |s| s.title() else app_name;
         const menu = if (w.surface) |s| s.menu() else &[_][]const u8{};
-        chrome.drawTitleBar(cv, th, frame, self.chromeState(w, now), title, app_name, menu);
+        chrome.drawTitleBar(cv, th, frame, self.chromeState(w, now), title, app_name, self.appIcon(w.app), menu);
         chrome.drawBorders(cv, th, frame, w.status, now);
     }
 
@@ -3120,7 +3601,7 @@ pub const Compositor = struct {
             // picture; the enlarged view has the title.
             const ic = Rect{ .x = thumb.x - 3, .y = thumb.bottom() + thumb_label - thumb_icon, .w = thumb_icon, .h = thumb_icon };
             cv.fillRoundRect(ic.inset(-2), @as(f32, @floatFromInt(thumb_icon)) * 0.3, th.get(.chrome));
-            chrome.drawAppIcon(cv, th, ic, self.appName(w.app), .body);
+            chrome.drawAppIcon(cv, th, ic, self.appName(w.app), .body, self.appIcon(w.app));
             // Several windows of the app: their number at the top-right.
             if (gr.count > 1) {
                 const bx: f32 = @floatFromInt(thumb.right() - 2);
@@ -3157,33 +3638,31 @@ pub const Compositor = struct {
         }
     }
 
-    fn drawDragFeedback(self: *Compositor, cv: *Canvas, _: i64) void {
+    fn drawDragFeedback(self: *Compositor, cv: *Canvas, now: i64) void {
         const th = &self.theme;
         switch (self.drag) {
             .title => |d| {
                 if (!d.moved) return;
-                // While dragging, every tile is outlined; the one under the
-                // pointer is where the window will go.
-                const target = self.tileAt(self.px, self.py);
+                // While dragging, every tile is outlined. The tile the
+                // pointer rests on brightens until its window moves aside.
                 const vis = self.visibleTiles();
-                for (self.slots[0..self.slot_count], 0..) |sl, i| {
-                    if (i >= vis.len) break;
-                    const r = sl.slot.inset(4);
-                    const is_target = target != null and target.?.eql(vis[i]) and !vis[i].eql(d.h);
-                    if (is_target) {
-                        cv.fillRoundRect(r, 10, th.get(.accent).fade(0.14));
-                        cv.strokeRoundRect(r, 10, 3, th.get(.accent));
-                    } else {
-                        cv.strokeRoundRect(r, 10, 1.5, th.get(.accent).fade(0.45));
-                    }
+                for (self.slots[0..@min(self.slot_count, vis.len)], vis[0..@min(self.slot_count, vis.len)]) |sl, vh| {
+                    if (vh.eql(d.h)) continue;
+                    const pending = sameHandle(d.want, vh) and !sameHandle(d.partner, vh);
+                    cv.strokeRoundRect(sl.slot.inset(4), 10, if (pending) 3 else 1.5, th.get(.accent).fade(if (pending) 0.8 else 0.45));
                 }
                 const g = self.windows.acquire(d.h) orelse return;
                 defer g.release();
-                const ghost = Rect{ .x = @as(i32, @intFromFloat(self.px)) - 80, .y = @as(i32, @intFromFloat(self.py)) - 12, .w = 160, .h = 24 };
-                cv.fillRoundRect(ghost, 6, th.get(.chrome_focused).fade(0.95));
-                cv.strokeRoundRect(ghost, 6, 0, th.get(.accent));
+                // Where the window will land: a placeholder in its tile,
+                // moving with the layout, with the window's title on it.
+                const r = currentFrame(g.ptr, now);
+                cv.fillRoundRect(r, 10, th.get(.accent).fade(0.14));
+                cv.strokeRoundRect(r, 10, 3, th.get(.accent));
                 const title = if (g.ptr.surface) |s| s.title() else self.appName(g.ptr.app);
-                _ = cv.textEllipsis(@floatFromInt(ghost.x + 10), @floatFromInt(ghost.y + 4), title, 140, .{}, th.get(.text));
+                const m = tw.font.Metrics.of(.{ .size = .large }, self.scale);
+                const tw_ = @min(m.width(title), @as(f32, @floatFromInt(@max(0, r.w - 32))));
+                _ = cv.textEllipsis(@as(f32, @floatFromInt(r.x)) + (@as(f32, @floatFromInt(r.w)) - tw_) / 2, @as(f32, @floatFromInt(r.y + @divTrunc(r.h, 2) - 12)), title, tw_, .{ .size = .large }, th.get(.text_dim));
+                self.drawDragThumb(cv, g.ptr);
             },
             .panel => |d| {
                 if (!d.moved or self.px < @as(f32, @floatFromInt(self.panelW()))) return;
@@ -3202,13 +3681,7 @@ pub const Compositor = struct {
                 // The window itself, as a small thumbnail under the pointer.
                 const g = self.windows.acquire(d.h) orelse return;
                 defer g.release();
-                const tw_: i32 = 200;
-                const th_: i32 = 130;
-                const thumb = Rect{ .x = @as(i32, @intFromFloat(self.px)) - @divTrunc(tw_, 2), .y = @as(i32, @intFromFloat(self.py)) - 16, .w = tw_, .h = th_ };
-                cv.fillRect(thumb.translate(0, 4), th.get(.shadow));
-                cv.fillRect(thumb, th.get(.surface));
-                if (g.ptr.pixels.len > 0) cv.blitScaled(g.ptr.pixels, g.ptr.buf_w, g.ptr.buf_h, thumb, 255);
-                cv.strokeRect(thumb, 2, th.get(.accent));
+                self.drawDragThumb(cv, g.ptr);
             },
             .col_border, .row_border => {},
             else => {},
@@ -3248,9 +3721,23 @@ pub const Compositor = struct {
         }, trail[0 .. tl + al]) catch {};
     }
 
-    fn publishWindowLocked(self: *Compositor, h: Handle, w: *const Window, kind: core.types.SceneKind) void {
+    /// Who a window belongs to and its trust (SceneIdentity).
+    fn identityRecord(self: *Compositor, out: *std.ArrayList(u8), h: Handle, w: *const Window) void {
+        core.format.appendStruct(self.gpa, out, core.types.scene_identity, 1, core.types.SceneIdentity{
+            .window_id = h.toId(),
+            .pid = w.pid,
+            .trust = w.trust,
+            .app_trust = w.app_trust,
+            .exe_len = @intCast(w.exe.len),
+        }, w.exe) catch {};
+    }
+
+    fn publishWindowLocked(self: *Compositor, h: Handle, w: *Window, kind: core.types.SceneKind) void {
+        // A new window's trust is decided as it opens.
+        if (kind == .opened) _ = self.decideTrust(w);
         if (self.publisher.subscriberCount() == 0) return;
         self.scratch.clearRetainingCapacity();
+        if (kind == .opened) self.identityRecord(&self.scratch, h, w);
         self.sceneRecord(&self.scratch, h, w, kind);
         self.publisher.broadcast(self.scratch.items);
     }
@@ -3259,12 +3746,14 @@ pub const Compositor = struct {
         self.scratch.clearRetainingCapacity();
         const marker = core.types.SceneWindow{ .kind = .snapshot_begin, .status = .normal, .focused = 0, .shelved = 0, .window_id = 0, .x = 0, .y = 0, .w = 0, .h = 0, .progress = 0, .title_len = 0, .app_id_len = 0 };
         core.format.appendStruct(self.gpa, &self.scratch, core.types.scene_window, 1, marker, "") catch return;
+        self.sessionRecord(&self.scratch);
         var hs: std.ArrayList(Handle) = .empty;
         defer hs.deinit(self.gpa);
         self.windows.handles(&hs, self.gpa) catch return;
         for (hs.items) |h| {
             const g = self.windows.acquire(h) orelse continue;
             defer g.release();
+            self.identityRecord(&self.scratch, h, g.ptr);
             self.sceneRecord(&self.scratch, h, g.ptr, .opened);
         }
         var end = marker;

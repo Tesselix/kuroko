@@ -1,5 +1,5 @@
-//! txwl: Tesselix as a Wayland server. Apps connect to it, and their
-//! windows are compositor windows like Tesselix's own (see server.zig).
+//! txwl: Kuroko as a Wayland server. Apps connect to it, and their
+//! windows are compositor windows like Kuroko's own (see server.zig).
 //! Pure Zig on libc sockets; builds and tests on macOS too.
 
 pub const wire = @import("wire.zig");

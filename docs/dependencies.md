@@ -2,7 +2,7 @@
 
 ## Rule: latest solid version (agreed, 2026-10-14)
 
-Tesselix uses the **latest solid** version of every tool and library.
+Kuroko uses the **latest solid** version of every tool and library.
 
 - **Solid** = a stable release (not a beta, release candidate or nightly)
   whose version line (major.minor) has been out for **at least 3 months**.
@@ -22,11 +22,15 @@ Tesselix uses the **latest solid** version of every tool and library.
 | Zig | 0.16.0 | 2026-04-14 | 2026-07-14 | 0.17.0 (2026-10-04) | 2027-01-04 |
 | SDL (simulator only) | 3.4.x, newest patch (3.4.18 when written) | 2026-01-01 | 2026-04-01 | — | — |
 | Inter font (atlases) | as shipped by the build machine; regenerate with `tools/fontgen` | | | | |
+| Noto Sans Hebrew (fallback atlases) | 3.001 (notofonts, hinted TTF); regenerate with `tools/fontgen --hebrew` | | | | |
 
-Later, for the Linux backend: wlroots, wayland, wayland-protocols,
-libinput, xkbcommon, pixman. Their versions are chosen by the same rule when
-the backend is built. Known constraint: zig-wlroots targets Zig 0.15 and
-wlroots 0.20, so either it catches up or Tesselix keeps its own binding.
+GPU: OpenGL ES 3.0 (Linux) and OpenGL 3.3 core (macOS), from the system's
+driver (Mesa on Linux); loaded at run time, nothing to pin.
+
+Later, for Kuroko's own Linux backend (no wlroots, see the Top-Level
+Design, "Foundation"): libdrm, GBM and EGL (Mesa), libinput, libxkbcommon,
+libseat, wayland-protocols (XML, for the protocol definitions). Their
+versions are chosen by the same rule when the backend is built.
 
 ## How to check
 

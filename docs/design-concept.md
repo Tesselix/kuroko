@@ -129,7 +129,7 @@ One ranking engine ("relevant to this user right now") drives every surface that
 - **Adaptive dock.** A pinned zone that never moves, plus a few predictive slots that follow the current context. Slots change only at calm moments, never while the cursor is heading toward the dock.
 - **Cursor launcher.** A hotkey, click-and-hold or gesture opens a small ring at the pointer with the top predictions and a mic button. The top slot keeps a fixed position so a flick becomes habit. "Everything else" is one click away.
 - **File manager search by memory.** Natural language or voice: "the document I worked on yesterday" (queries the episode log), "the video about X" (queries a local content index of document text and transcripts), or both combined. Local speech-to-text handles voice.
-- **"Relevant now" quick links.** Replaces "recent files" with what the user actually engaged with, matched to the time context (start of the workday surfaces the morning working set).
+- **"Relevant now" quick links** (now named **Focus**, shown before Recent; see `docs/user-signals.md`). Lists, before "recent files", what the user actually engaged with, matched to the time context (start of the workday surfaces the morning working set).
 - **Open-with prediction.** Once a file is selected, the app the user is most likely to open it with in this context is highlighted.
 - **Email triage.** The inbox ranks by personal interest: history with the sender, open and reply rates, dwell, and what the user always ignores. Headers only; bodies are never read. Needs a mail connector or client plugin, since the compositor only sees the visible list.
 

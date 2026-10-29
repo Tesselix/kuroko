@@ -1,7 +1,7 @@
 //! What a framework window offers the compositor.
 //!
 //! On Linux a window reaches the compositor through Wayland (xdg-shell
-//! buffers) plus the Tesselix protocol for menus, status and content size.
+//! buffers) plus the Kuroko protocol for menus, status and content size.
 //! In the simulator, apps run in-process and the compositor calls this
 //! interface directly. Keep it to what the real protocols can carry.
 

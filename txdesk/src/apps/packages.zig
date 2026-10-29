@@ -139,7 +139,7 @@ test "managers from paths" {
     try std.testing.expectEqualStrings("chromium", fromPath("/snap/bin/chromium.chromedriver").package);
     try std.testing.expectEqualStrings("chromium", fromPath("/snap/chromium/3564/usr/lib/chromium-browser/chrome").package);
     try std.testing.expectEqual(types.PackageManager.appimage, fromPath("/home/t/Applications/Krita.AppImage").manager);
-    try std.testing.expectEqual(types.PackageManager.manual, fromPath("/home/t/.cache/tesselix/bin/txsim").manager);
+    try std.testing.expectEqual(types.PackageManager.manual, fromPath("/home/t/.cache/kuroko/bin/txsim").manager);
 }
 
 test "dpkg: owner and version, merged /usr" {

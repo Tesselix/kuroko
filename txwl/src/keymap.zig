@@ -34,11 +34,11 @@ pub const mod_super: u32 = 1 << 6; // Mod4
 /// owns the fd. Returns the size to announce.
 pub fn file(text: []const u8) !struct { fd: c.fd_t, size: u32 } {
     const fd: c.fd_t = if (builtin.os.tag == .linux) blk: {
-        const f = c.memfd_create("tesselix-keymap", 1); // MFD_CLOEXEC
+        const f = c.memfd_create("kuroko-keymap", 1); // MFD_CLOEXEC
         if (f < 0) return error.MemFd;
         break :blk f;
     } else blk: {
-        var name = "/tmp/tesselix-keymap-XXXXXX".*;
+        var name = "/tmp/kuroko-keymap-XXXXXX".*;
         const f = mkstemp(&name);
         if (f < 0) return error.TempFile;
         _ = c.unlink(&name);

@@ -11,11 +11,11 @@ const controls = @import("controls");
 const ms = std.time.ns_per_ms;
 
 const apps = [_]txcomp.AppEntry{
-    .{ .name = "Controls", .app_id = "org.tesselix.controls", .start_ms = 300, .create = controls.createControls },
-    .{ .name = "Scroll Lab", .app_id = "org.tesselix.scroll-lab", .start_ms = 1200, .create = controls.createScrollLab },
-    .{ .name = "Stopwatch", .app_id = "org.tesselix.stopwatch", .start_ms = 150, .create = controls.createStopwatch },
-    .{ .name = "Notes", .app_id = "org.tesselix.notes", .start_ms = 400, .create = controls.createNotes },
-    .{ .name = "Reader", .app_id = "org.tesselix.reader", .start_ms = 600, .create = controls.createReader },
+    .{ .name = "Controls", .app_id = "org.kuroko.controls", .start_ms = 300, .create = controls.createControls },
+    .{ .name = "Scroll Lab", .app_id = "org.kuroko.scroll-lab", .start_ms = 1200, .create = controls.createScrollLab },
+    .{ .name = "Stopwatch", .app_id = "org.kuroko.stopwatch", .start_ms = 150, .create = controls.createStopwatch },
+    .{ .name = "Notes", .app_id = "org.kuroko.notes", .start_ms = 400, .create = controls.createNotes },
+    .{ .name = "Reader", .app_id = "org.kuroko.reader", .start_ms = 600, .create = controls.createReader },
 };
 
 test "headless session: launch, tile, input, shelve, close" {
@@ -61,6 +61,64 @@ test "headless session: launch, tile, input, shelve, close" {
     // One window closed, one shelved: two remain tiled.
     try std.testing.expectEqual(@as(usize, 1), comp.shelf.items.len);
     try std.testing.expectEqual(@as(usize, 1), comp.tiles.items.len);
+}
+
+test "a recorded frame replayed on the CPU equals the frame drawn directly" {
+    // Two compositors driven the same way: one draws straight into pixels,
+    // the other records a draw list (as for the GPU) that is then replayed.
+    // Also checks that the core is deterministic for the same inputs.
+    const gpa = std.testing.allocator;
+    const w = 1280;
+    const h = 800;
+    const direct = try gpa.alloc(u32, w * h);
+    defer gpa.free(direct);
+    const replayed = try gpa.alloc(u32, w * h);
+    defer gpa.free(replayed);
+
+    const a = try txcomp.Compositor.init(gpa, &apps, .{ .w = w, .h = h }, 1, .{});
+    defer a.deinit();
+    const b = try txcomp.Compositor.init(gpa, &apps, .{ .w = w, .h = h }, 1, .{});
+    defer b.deinit();
+    var list = tw.DrawList.init(gpa);
+    defer list.deinit();
+
+    var now: i64 = 0;
+    for ([_]usize{ 2, 4, 3, 1, 0 }) |i| {
+        _ = try a.launch(i, now);
+        _ = try b.launch(i, now);
+    }
+    var cva = tw.Canvas.init(direct, w, h, w, 1);
+    var cvr = tw.Canvas.init(replayed, w, h, w, 1);
+    var checked: usize = 0;
+    var frame: usize = 0;
+    while (frame < 160) : (frame += 1) {
+        now += 16 * ms;
+        const ev: ?core.input.Event = switch (frame) {
+            100 => .{ .pointer_motion = .{ .x = 640, .y = 400 } },
+            // Close the focused window: its shrinking picture is a scaled,
+            // fading image.
+            110 => .{ .key = .{ .key = .x, .pressed = true, .mods = .{ .super = true } } },
+            // The launcher over everything.
+            130 => .{ .key = .{ .key = .super, .pressed = true, .mods = .{} } },
+            131 => .{ .key = .{ .key = .super, .pressed = false, .mods = .{} } },
+            else => null,
+        };
+        for ([_]*txcomp.Compositor{ a, b }) |comp| {
+            if (ev) |e| comp.handleInput(e, now);
+            _ = comp.tick(now);
+        }
+        a.render(&cva, now);
+        list.reset();
+        var rec = tw.Canvas.recorder(&list, w, h, 1);
+        b.render(&rec, now);
+        try std.testing.expectEqual(@as(u32, 0), list.dropped);
+        if (frame % 10 == 0 or (frame >= 110 and frame < 128)) {
+            cvr.replay(&list);
+            try std.testing.expectEqualSlices(u32, direct, replayed);
+            checked += 1;
+        }
+    }
+    try std.testing.expect(checked > 20);
 }
 
 test "dragging the shared border between two windows resizes both slots" {
@@ -319,6 +377,71 @@ test "double click on a title bar maximizes, again restores" {
     try std.testing.expectEqual(@as(usize, 2), comp.tiles.items.len);
 }
 
+test "reorder: dragging a title bar previews the swap; the drop keeps it, Escape undoes it" {
+    const gpa = std.testing.allocator;
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+    const px = try gpa.alloc(u32, 1440 * 900);
+    defer gpa.free(px);
+    var cv = tw.Canvas.init(px, 1440, 900, 1440, 1);
+    var now: i64 = 0;
+    const a = try comp.launch(0, now);
+    const b = try comp.launch(1, now);
+    settle(comp, &now);
+    try std.testing.expect(comp.tiles.items[0].eql(a));
+
+    const fa = comp.slots[0].frame;
+    const sb = comp.slots[1].slot;
+    const ax: f32 = @floatFromInt(fa.x + fa.w - 40);
+    const ay: f32 = @floatFromInt(fa.y + 10);
+    const bx: f32 = @floatFromInt(sb.x + @divTrunc(sb.w, 2));
+    const by: f32 = @floatFromInt(sb.y + @divTrunc(sb.h, 2));
+    const step = struct {
+        fn run(cp: *txcomp.Compositor, c: *tw.Canvas, t: *i64, frames: usize) void {
+            for (0..frames) |_| {
+                t.* += 16 * ms;
+                _ = cp.tick(t.*);
+                cp.render(c, t.*);
+            }
+        }
+    }.run;
+
+    // Press on a's title bar and drag onto b's tile.
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = true, .x = ax, .y = ay } }, now);
+    comp.handleInput(.{ .pointer_motion = .{ .x = ax + 20, .y = ay } }, now);
+    comp.handleInput(.{ .pointer_motion = .{ .x = bx, .y = by } }, now);
+    // Not yet: the pointer has not rested on the tile.
+    try std.testing.expect(comp.tiles.items[0].eql(a));
+    step(comp, &cv, &now, 10);
+    // While still dragging, b has moved into a's tile, animated.
+    try std.testing.expect(comp.tiles.items[0].eql(b));
+    // Back over its own tile: the preview is undone.
+    comp.handleInput(.{ .pointer_motion = .{ .x = ax, .y = ay + 100 } }, now);
+    step(comp, &cv, &now, 10);
+    try std.testing.expect(comp.tiles.items[0].eql(a));
+    // Escape cancels the drag; nothing moves.
+    comp.handleInput(.{ .pointer_motion = .{ .x = bx, .y = by } }, now);
+    step(comp, &cv, &now, 10);
+    try std.testing.expect(comp.tiles.items[0].eql(b));
+    comp.handleInput(.{ .key = .{ .key = .escape, .pressed = true, .mods = .{} } }, now);
+    try std.testing.expect(comp.tiles.items[0].eql(a));
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = false, .x = bx, .y = by } }, now);
+    try std.testing.expect(comp.tiles.items[0].eql(a));
+    settle(comp, &now);
+
+    // A fast drop, before the preview: the windows still swap.
+    const fa2 = comp.slots[0].frame;
+    const ax2: f32 = @floatFromInt(fa2.x + fa2.w - 40);
+    const ay2: f32 = @floatFromInt(fa2.y + 10);
+    now += 500 * ms; // not a double click
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = true, .x = ax2, .y = ay2 } }, now);
+    comp.handleInput(.{ .pointer_motion = .{ .x = bx, .y = by } }, now);
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = false, .x = bx, .y = by } }, now);
+    try std.testing.expect(comp.tiles.items[0].eql(b) and comp.tiles.items[1].eql(a));
+    step(comp, &cv, &now, 20);
+    try std.testing.expectEqual(@as(usize, 2), comp.tiles.items.len);
+}
+
 test "closing leaves a shrinking picture that goes away" {
     const gpa = std.testing.allocator;
     const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
@@ -522,7 +645,11 @@ test "installed apps from txdesk appear in the launcher and start" {
     comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = true, .x = 16, .y = 14 } }, now);
     comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = false, .x = 16, .y = 14 } }, now);
     try std.testing.expect(comp.launcher.open);
-    try std.testing.expectEqual(apps.len + 2, comp.launcher.order_len);
+    // The app just started is in Recent (this session's launches: no
+    // txdesk here), so All apps leaves it out: every app is shown once.
+    try std.testing.expectEqual(@as(usize, 1), comp.launcher.recent_len);
+    try std.testing.expectEqual(apps.len, comp.launcher.recent[0].app);
+    try std.testing.expectEqual(apps.len + 1, comp.launcher.order_len);
     const px = try gpa.alloc(u32, 1440 * 900);
     defer gpa.free(px);
     var cv = tw.Canvas.init(px, 1440, 900, 1440, 1);
@@ -554,16 +681,210 @@ test "an app's window takes its launch placeholder; an unknown app gets a tile" 
 
     // Its window arrives: same tile, no second window.
     const s1 = try controls.createStopwatch(gpa);
-    comp.adoptWindow(s1, "/bin/sh", now);
+    comp.adoptWindow(s1, .{ .pid = 4242, .exe = "/bin/sh" }, now);
     try std.testing.expectEqual(@as(usize, 1), comp.tiles.items.len);
     _ = comp.tick(now);
 
     // A window of an app the registry does not know: a tile of its own.
     const s2 = try controls.createStopwatch(gpa);
-    comp.adoptWindow(s2, "/usr/local/bin/unknown-app", now);
+    comp.adoptWindow(s2, .{ .pid = 4243, .exe = "/usr/local/bin/unknown-app" }, now);
     try std.testing.expectEqual(@as(usize, 2), comp.tiles.items.len);
     try std.testing.expect(comp.app_infos.items[comp.app_infos.items.len - 1].hidden);
     _ = comp.tick(now + 300 * ms);
+}
+
+fn feed(comp: *txcomp.Compositor, bytes: []const u8) void {
+    var reader = core.format.Reader.init(bytes, &core.types.known);
+    while (reader.next()) |rec| comp.deskRecordForTest(rec);
+}
+
+fn deskTrust(gpa: std.mem.Allocator, out: *std.ArrayList(u8), kind: core.types.DeskTrustKind, subject: core.types.TrustSubject, level: core.types.Trust, path: []const u8) !void {
+    try core.format.appendStruct(gpa, out, core.types.desk_trust, 1, core.types.DeskTrust{
+        .kind = kind,
+        .subject = subject,
+        .level = level,
+        .path_len = @intCast(path.len),
+    }, path);
+}
+
+test "window trust: own apps and installed apps are trusted, others by the user's marks" {
+    const gpa = std.testing.allocator;
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+
+    // The registry: /bin/sh is installed, under the Stopwatch's app id, so
+    // an impostor can claim that id.
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try deskApp(gpa, &out, .snapshot_begin, .installed, 0, &.{}, &.{});
+    try deskApp(gpa, &out, .app, .installed, 0, &.{ "/bin/sh", "org.kuroko.stopwatch", "Shell", "", "1.0", "" }, &.{"/bin/sh"});
+    try deskApp(gpa, &out, .snapshot_end, .installed, 0, &.{}, &.{});
+    feed(comp, out.items);
+
+    var now: i64 = 0;
+    const own = try comp.launch(0, now);
+    try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(own).?.window);
+
+    // The installed app's own binary: trusted.
+    comp.adoptWindow(try controls.createStopwatch(gpa), .{ .pid = 100, .exe = "/bin/sh" }, now);
+    const sh = comp.tiles.items[comp.tiles.items.len - 1];
+    try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(sh).?.app);
+    try std.testing.expectEqual(@as(i32, 100), comp.trustOf(sh).?.pid);
+
+    // Another binary claiming the same app id: not trusted.
+    comp.adoptWindow(try controls.createStopwatch(gpa), .{ .pid = 101, .exe = "/tmp/impostor" }, now);
+    const fake = comp.tiles.items[comp.tiles.items.len - 1];
+    try std.testing.expect(!fake.eql(sh));
+    try std.testing.expectEqual(core.types.Trust.untrusted, comp.trustOf(fake).?.app);
+
+    // An app nobody installed: untrusted until the user marks it.
+    comp.adoptWindow(try controls.createStopwatch(gpa), .{ .pid = 102, .exe = "/home/u/bin/tool" }, now);
+    const tool = comp.tiles.items[comp.tiles.items.len - 1];
+    try std.testing.expectEqual(core.types.Trust.untrusted, comp.trustOf(tool).?.window);
+    out.clearRetainingCapacity();
+    try deskTrust(gpa, &out, .snapshot_begin, .app, .unknown, "");
+    try deskTrust(gpa, &out, .mark, .app, .trusted, "/home/u/bin/tool");
+    try deskTrust(gpa, &out, .mark, .folder, .untrusted, "/home/u/Downloads");
+    try deskTrust(gpa, &out, .snapshot_end, .app, .unknown, "");
+    feed(comp, out.items);
+    try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(tool).?.window);
+
+    // A file from an untrusted folder in a trusted app: the window is not.
+    comp.setWindowObject(sh, "/home/u/Downloads/invoice.pdf");
+    try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(sh).?.app);
+    try std.testing.expectEqual(core.types.Trust.untrusted, comp.trustOf(sh).?.window);
+    // The user trusts that file: it applies at once.
+    comp.markWindowObject(sh, .trusted);
+    try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(sh).?.window);
+
+    // txdesk takes the app mark back: the tool is untrusted again.
+    out.clearRetainingCapacity();
+    try deskTrust(gpa, &out, .cleared, .app, .unknown, "/home/u/bin/tool");
+    feed(comp, out.items);
+    try std.testing.expectEqual(core.types.Trust.untrusted, comp.trustOf(tool).?.window);
+
+    // Kuroko's own apps cannot be marked.
+    comp.markWindowApp(own, .untrusted);
+    try std.testing.expectEqual(core.types.Trust.trusted, comp.trustOf(own).?.window);
+    now += 16 * ms;
+    _ = comp.tick(now);
+}
+
+const FakeInfluence = struct {
+    bytes: []const u8,
+    reads: usize = 0,
+
+    fn read(ctx: *anyopaque, gpa: std.mem.Allocator, name: []const u8) ?[]u8 {
+        const self: *FakeInfluence = @ptrCast(@alignCast(ctx));
+        if (!std.mem.eql(u8, name, "focus.krkde")) return null;
+        self.reads += 1;
+        return gpa.dupe(u8, self.bytes) catch null;
+    }
+};
+
+test "launcher: Focus, then Recent, then the other apps, each app once" {
+    const gpa = std.testing.allocator;
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+
+    // txdesk's lists: Notes in Focus (a cycle), Reader by use; Recent lists
+    // Notes again (dropped: Focus holds it), Stopwatch, and an app that
+    // does not exist (dropped: references only).
+    const picks = [_]core.influence.Pick{
+        .{ .list = .focus, .reason = .cycle, .value = 5, .app = "org.kuroko.notes" },
+        .{ .list = .focus, .reason = .used, .value = 42, .app = "org.kuroko.reader" },
+        .{ .list = .recent, .reason = .opened, .value = 1_760_000_000, .app = "org.kuroko.notes" },
+        .{ .list = .recent, .reason = .opened, .value = 1_760_000_000, .app = "/usr/bin/gone" },
+        .{ .list = .recent, .reason = .opened, .value = 1_759_999_000, .app = "org.kuroko.stopwatch" },
+    };
+    const bytes = try core.influence.encode(gpa, &picks, 1_760_000_100, .predictor);
+    defer gpa.free(bytes);
+    var fake: FakeInfluence = .{ .bytes = bytes };
+    comp.state_reader = .{ .ctx = &fake, .read = FakeInfluence.read };
+    comp.setWallTime(1_760_000_300);
+
+    const now: i64 = 0;
+    comp.handleInput(.{ .key = .{ .key = .super, .pressed = true, .mods = .{} } }, now);
+    comp.handleInput(.{ .key = .{ .key = .super, .pressed = false, .mods = .{} } }, now);
+    const l = &comp.launcher;
+    try std.testing.expect(l.open);
+    try std.testing.expectEqual(@as(usize, 2), l.focus_len);
+    try std.testing.expectEqual(@as(usize, 3), l.focus[0].app); // Notes
+    try std.testing.expectEqual(@as(usize, 4), l.focus[1].app); // Reader
+    try std.testing.expectEqual(@as(usize, 1), l.recent_len);
+    try std.testing.expectEqual(@as(usize, 2), l.recent[0].app); // Stopwatch
+    // The other two apps, and nothing twice.
+    try std.testing.expectEqual(apps.len - 3, l.order_len);
+    for (l.order[0..l.order_len]) |a| try std.testing.expect(a == 0 or a == 1);
+
+    const px = try gpa.alloc(u32, 1440 * 900);
+    defer gpa.free(px);
+    var cv = tw.Canvas.init(px, 1440, 900, 1440, 1);
+    comp.render(&cv, now + 300 * ms);
+
+    // Read once; again only after txdesk says the file changed.
+    comp.handleInput(.{ .key = .{ .key = .escape, .pressed = true, .mods = .{} } }, now);
+    for (0..2) |_| {
+        comp.handleInput(.{ .key = .{ .key = .super, .pressed = true, .mods = .{} } }, now);
+        comp.handleInput(.{ .key = .{ .key = .super, .pressed = false, .mods = .{} } }, now);
+        comp.handleInput(.{ .key = .{ .key = .escape, .pressed = true, .mods = .{} } }, now);
+    }
+    try std.testing.expectEqual(@as(usize, 1), fake.reads);
+    var notice: std.ArrayList(u8) = .empty;
+    defer notice.deinit(gpa);
+    try core.format.appendStruct(gpa, &notice, core.types.desk_notice, 1, core.types.DeskNotice{ .kind = .influence_changed }, "");
+    feed(comp, notice.items);
+    comp.handleInput(.{ .key = .{ .key = .super, .pressed = true, .mods = .{} } }, now);
+    comp.handleInput(.{ .key = .{ .key = .super, .pressed = false, .mods = .{} } }, now);
+    try std.testing.expectEqual(@as(usize, 2), fake.reads);
+}
+
+const FakeState = struct {
+    icons: []const u8,
+
+    fn read(ctx: *anyopaque, gpa: std.mem.Allocator, name: []const u8) ?[]u8 {
+        const self: *FakeState = @ptrCast(@alignCast(ctx));
+        if (!std.mem.eql(u8, name, "icons.krkde")) return null;
+        return gpa.dupe(u8, self.icons) catch null;
+    }
+};
+
+test "an installed app shows its icon from txdesk's icons file" {
+    const gpa = std.testing.allocator;
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try deskApp(gpa, &out, .snapshot_begin, .installed, 0, &.{}, &.{});
+    try deskApp(gpa, &out, .app, .installed, 0, &.{ "/bin/sh", "sh", "Shell", "", "1.0", "" }, &.{"/bin/sh"});
+    try deskApp(gpa, &out, .snapshot_end, .installed, 0, &.{}, &.{});
+    feed(comp, out.items);
+
+    // A pure red 64 px icon with a transparent corner.
+    var px: [64 * 64]u32 = @splat(0xFFFF0000);
+    px[0] = 0;
+    var file: std.ArrayList(u8) = .empty;
+    defer file.deinit(gpa);
+    try core.icons.append(gpa, &file, .{ .key = "/bin/sh", .w = 64, .h = 64, .pixels = &px });
+    var fake: FakeState = .{ .icons = file.items };
+    comp.state_reader = .{ .ctx = &fake, .read = FakeState.read };
+    _ = comp.tick(0);
+    const info = comp.app_infos.items[apps.len];
+    try std.testing.expect(info.icon.small != null);
+    try std.testing.expect(comp.app_infos.items[0].icon.small == null); // own apps: letter tiles
+
+    // The launcher draws it: the icon's middle is red on screen.
+    comp.handleInput(.{ .key = .{ .key = .super, .pressed = true, .mods = .{} } }, 0);
+    comp.handleInput(.{ .key = .{ .key = .super, .pressed = false, .mods = .{} } }, 0);
+    const screen = try gpa.alloc(u32, 1440 * 900);
+    defer gpa.free(screen);
+    var cv = tw.Canvas.init(screen, 1440, 900, 1440, 1);
+    comp.render(&cv, 400 * ms);
+    var red: usize = 0;
+    for (screen) |p| {
+        if (p == 0xFFFF0000) red += 1;
+    }
+    try std.testing.expect(red > 60 * 60);
 }
 
 test {

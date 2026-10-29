@@ -1,30 +1,30 @@
-//! Tesselix build. One repo, one pinned Zig version (see build.zig.zon).
+//! Kuroko build. One repo, one pinned Zig version (see build.zig.zon).
 //!
 //!   zig build test        all unit tests (any OS)
 //!   zig build run         the simulator: compositor + desktop + apps (needs SDL3)
 //!   zig build run-desk    the desktop-service stub (context hub)
-//!   zig build run-desk -- apps scan   scan for installed apps (apps.tslx)
+//!   zig build run-desk -- apps scan   scan for installed apps (apps.krkde)
 //!   zig build             everything
 //!
 //! For the Ubuntu ARM VM (from the Mac): `sh tools/ubuntu/build.sh`, which runs
-//!   zig build -Dtarget=aarch64-linux-gnu --prefix ubuntu-share/tesselix
+//!   zig build -Dtarget=aarch64-linux-gnu --prefix ubuntu-share/kuroko
 
 const std = @import("std");
 const builtin = @import("builtin");
 
-// Tesselix is pinned to Zig 0.16.x for development (0.17 before production).
+// Kuroko is pinned to Zig 0.16.x for development (0.17 before production).
 // Other versions change the std APIs this code uses, so stop early with a
 // clear message instead of a page of API errors.
 comptime {
     if (builtin.zig_version.major != 0 or builtin.zig_version.minor != 16) {
-        @compileError("Tesselix needs Zig 0.16.0, but this is Zig " ++ builtin.zig_version_string ++
+        @compileError("Kuroko needs Zig 0.16.0, but this is Zig " ++ builtin.zig_version_string ++
             ". Install 0.16.0 (brew install zig, or https://ziglang.org/download/) and put it first on your PATH.");
     }
 }
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    // ReleaseSafe by default: it is how Tesselix ships (bounds and overflow
+    // ReleaseSafe by default: it is how Kuroko ships (bounds and overflow
     // checks stay on), and Debug is too slow to judge scrolling by feel.
     // Use -Doptimize=Debug for debugging.
     const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Optimization mode (default ReleaseSafe)") orelse .ReleaseSafe;
@@ -63,6 +63,15 @@ pub fn build(b: *std.Build) void {
             .{ .name = "txwidgets", .module = widgets },
         },
     });
+    const gpu = b.addModule("txgl", .{
+        .root_source_file = b.path("txgl/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "txcore", .module = core },
+            .{ .name = "txwidgets", .module = widgets },
+        },
+    });
     const controls = b.addModule("controls", .{
         .root_source_file = b.path("apps/controls/src/root.zig"),
         .target = target,
@@ -93,12 +102,30 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{.{ .name = "txcore", .module = core }},
     });
+    const trust_test = b.createModule(.{
+        .root_source_file = b.path("txdesk/src/trust.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "txcore", .module = core }},
+    });
+    const focus_test = b.createModule(.{
+        .root_source_file = b.path("txdesk/src/focus.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "txcore", .module = core }},
+    });
+    const icons_test = b.createModule(.{
+        .root_source_file = b.path("txdesk/src/icons.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "txcore", .module = core }},
+    });
     const stub_test = b.createModule(.{
         .root_source_file = b.path("tools/txsim/src/sdl_stub.zig"),
         .target = target,
         .optimize = optimize,
     });
-    for ([_]*std.Build.Module{ core, widgets, comp, wl, controls, headless, stub_test, apps_test }) |m| {
+    for ([_]*std.Build.Module{ core, widgets, comp, wl, gpu, controls, headless, stub_test, apps_test, trust_test, focus_test, icons_test }) |m| {
         const t = b.addTest(.{ .root_module = m });
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
@@ -134,6 +161,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "txcomp", .module = comp },
                 .{ .name = "controls", .module = controls },
                 .{ .name = "txwl", .module = wl },
+                .{ .name = "txgl", .module = gpu },
             },
         });
         // SDL3 is declared by hand in tools/txsim/src/sdl.zig (no C headers
