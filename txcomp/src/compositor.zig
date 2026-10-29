@@ -230,21 +230,22 @@ const Chooser = struct {
     }
 };
 
-/// All windows of one app in the panel share one thumbnail.
+/// All windows of one app in the panel share one icon.
 const Group = struct {
     app: usize,
-    /// The window the thumbnail shows: the most recently minimized.
+    /// The window a click brings up: the only one, else the most recently
+    /// minimized, else the most recently used one on screen.
     rep: Handle,
     count: u8,
     /// Windows on screen (tiled or full screen); the rest are minimized.
     visible: u8 = 0,
     /// When the app's first window opened: the panel keeps this order.
     first: u64 = 0,
-    /// Thumbnail plus the room below it for the icon.
+    /// The app icon.
     rect: Rect,
 
     fn thumb(self: Group) Rect {
-        return .{ .x = self.rect.x, .y = self.rect.y, .w = self.rect.w, .h = self.rect.h - 8 };
+        return self.rect;
     }
 };
 
@@ -2996,8 +2997,7 @@ pub const Compositor = struct {
     }
 
     /// Panel entries, top to bottom: one per app, in the order the apps
-    /// first went to the panel. Each shows the most recently minimized
-    /// window of the app (one not still flying in, when there is one).
+    /// first opened. Each is the app's icon with the number of its windows.
     fn groups(self: *const Compositor, out: []Group) usize {
         const self_m = @constCast(self);
         var n: usize = 0;
@@ -3009,10 +3009,10 @@ pub const Compositor = struct {
                 defer g.release();
                 const w = g.ptr;
                 const visible = li < 2;
-                // Which window the thumbnail shows: the most recently used
-                // window on screen; else the most recently minimized one
-                // that has landed.
-                const score: i64 = if (visible) w.last_focus + std.math.maxInt(i32) * ms * 4 else if (w.fly_start < 0) @as(i64, @intCast(pos)) else -1;
+                // Which window a click brings up: the most recently
+                // minimized (the shelf is in minimize order); else the most
+                // recently used window on screen.
+                const score: i64 = if (visible) w.last_focus else std.math.maxInt(i32) * ms * 4 + @as(i64, @intCast(pos));
                 var found = false;
                 for (out[0..n], 0..) |*gr, gi| {
                     if (gr.app != w.app) continue;
@@ -3038,24 +3038,14 @@ pub const Compositor = struct {
                 return if (x.first != y.first) x.first < y.first else x.app < y.app;
             }
         }.lt);
-        const w: i32 = shell.panel_w - 2 * thumb_pad;
         // Entries stop above the apps button, below the panel buttons.
         const limit = self.appsButtonRect().y - shell.panel_pad;
         var y: i32 = self.panelButtonRect(.close_all).bottom() + shell.panel_pad;
         var k: usize = 0;
         while (k < n) : (k += 1) {
-            const aspect: f32 = blk: {
-                const g = self_m.windows.acquire(out[k].rep) orelse break :blk 0.75;
-                defer g.release();
-                const c = g.ptr.content;
-                break :blk if (c.w > 0 and c.h > 0) @as(f32, @floatFromInt(c.h)) / @as(f32, @floatFromInt(c.w)) else 0.75;
-            };
-            // Taller than a wide window would give: the thumbnail shows its
-            // top-left part, larger (see blitCover).
-            const h: i32 = std.math.clamp(@as(i32, @intFromFloat(@as(f32, @floatFromInt(w)) * aspect)), 62, 96) + thumb_label;
-            if (y + h > limit) break;
-            out[k].rect = .{ .x = thumb_pad, .y = y, .w = w, .h = h };
-            y += h + thumb_gap;
+            if (y + panel_icon > limit) break;
+            out[k].rect = .{ .x = @divTrunc(shell.panel_w - panel_icon, 2), .y = y, .w = panel_icon, .h = panel_icon };
+            y += panel_icon + panel_icon_gap;
         }
         return k;
     }
@@ -3075,13 +3065,10 @@ pub const Compositor = struct {
         return null;
     }
 
-    /// Panel thumbnails: margin, and the app icon row under each.
-    const thumb_pad = 5;
-    /// Room under a thumbnail for the part of the app icon that hangs below.
-    const thumb_label = 8;
-    const thumb_gap = 10;
-    /// The app icon resting on a thumbnail's bottom-left corner.
-    const thumb_icon = 28;
+    /// Panel entries: the app icon, and the room below it for the status
+    /// line.
+    const panel_icon = 52;
+    const panel_icon_gap = 14;
 
     const PanelButton = enum { minimize_all, close_all };
 
@@ -3542,8 +3529,8 @@ pub const Compositor = struct {
         }
     }
 
-    /// The panel on the left: minimized windows as live thumbnails.
-    /// A window that was just minimized flies from its frame into its slot.
+    /// The panel on the left: one icon per open app, with the number of its
+    /// windows. A window that was just minimized flies into its app's icon.
     fn drawShelf(self: *Compositor, cv: *Canvas, now: i64) void {
         const th = &self.theme;
         const strip = Rect{ .x = 0, .y = shell.top_bar_h, .w = self.panelW(), .h = self.screen.h - shell.top_bar_h };
@@ -3560,22 +3547,21 @@ pub const Compositor = struct {
             defer g.release();
             const w = g.ptr;
             const thumb = gr.thumb();
-            if (w.fly_start >= 0 and now - w.fly_start < fly_ms * ms) {
-                // Still flying (and no other window of the app here yet):
-                // drawn by drawFlying, on top of everything.
+            if (gr.count == 1 and w.fly_start >= 0 and now - w.fly_start < fly_ms * ms) {
+                // The app's only window is still flying in: drawn by
+                // drawFlying, on top of everything; the icon follows.
                 continue;
             }
-            cv.fillRect(thumb, th.get(.surface));
-            self.ensureDrawn(w);
-            blitCover(cv, w, thumb);
-            // Only minimized windows: the thumbnail is dimmed.
-            if (gr.visible == 0) cv.fillRect(thumb, th.get(.chrome).fade(0.5));
+            const hovered = r.contains(self.px, self.py);
+            const radius = @as(f32, @floatFromInt(panel_icon)) * 0.24;
+            if (hovered) cv.fillRoundRect(thumb.inset(-4), radius + 4, th.get(.accent).fade(0.16));
+            chrome.drawAppIcon(cv, th, thumb, self.appName(w.app), .title, self.appIcon(w.app));
+            // Only minimized windows: the icon is dimmed.
+            if (gr.visible == 0) cv.fillRoundRect(thumb, radius, th.get(.chrome).fade(0.45));
             // A window on screen: a bar at the panel's edge (shape, not
             // only color).
             if (gr.visible > 0) cv.fillRoundRect(.{ .x = 0, .y = thumb.y + 8, .w = 3, .h = thumb.h - 16 }, 1.5, th.get(.accent));
-            const hovered = r.contains(self.px, self.py);
-            cv.hairlineRect(thumb, th.get(if (hovered) .accent else .border));
-            if (hovered) cv.strokeRect(thumb.inset(-2), 2, th.get(.accent));
+            if (hovered) cv.strokeRoundRect(thumb.inset(-4), radius + 4, 2, th.get(.accent));
             // The flash when a window of the app has just landed here.
             const flash_at: i64 = blk: {
                 var best: i64 = -1;
@@ -3592,16 +3578,11 @@ pub const Compositor = struct {
             };
             if (flash_at >= 0) {
                 const f = @sin(std.math.pi * @as(f32, @floatFromInt(now - flash_at)) / @as(f32, @floatFromInt(flash_ms * ms)));
-                cv.fillRect(thumb, th.get(.accent).fade(0.22 * f));
-                cv.strokeRect(thumb.inset(-2), 3, th.get(.accent).fade(f));
+                cv.fillRoundRect(thumb, radius, th.get(.accent).fade(0.22 * f));
+                cv.strokeRoundRect(thumb.inset(-2), radius + 2, 3, th.get(.accent).fade(f));
             }
-            // Status keeps working on thumbnails.
-            if (w.status.kind != .normal) chrome.drawBorders(cv, th, .{ .x = thumb.x, .y = thumb.y - chrome.title_h, .w = thumb.w, .h = thumb.h + chrome.title_h }, w.status, 0);
-            // A large app icon rests on its bottom-left corner, over the
-            // picture; the enlarged view has the title.
-            const ic = Rect{ .x = thumb.x - 3, .y = thumb.bottom() + thumb_label - thumb_icon, .w = thumb_icon, .h = thumb_icon };
-            cv.fillRoundRect(ic.inset(-2), @as(f32, @floatFromInt(thumb_icon)) * 0.3, th.get(.chrome));
-            chrome.drawAppIcon(cv, th, ic, self.appName(w.app), .body, self.appIcon(w.app));
+            // Status keeps working: its line runs under the icon.
+            if (w.status.kind != .normal) chrome.drawBorders(cv, th, .{ .x = thumb.x, .y = thumb.bottom() + 4 - chrome.title_h, .w = thumb.w, .h = chrome.title_h + chrome.status_h }, w.status, now);
             // Several windows of the app: their number at the top-right.
             if (gr.count > 1) {
                 const bx: f32 = @floatFromInt(thumb.right() - 2);

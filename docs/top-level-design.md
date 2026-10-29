@@ -240,8 +240,8 @@ Every window has four buttons: **close, minimize, maximize, full screen**.
 
 - **Tiling appears only with two or more windows.** A lone window fills the whole work area, with no tile margin.
 - **Close** ends the app; the remaining windows take the room, animated. The closed window shrinks to nothing at its center, fading as it goes (agreed, 2026-10-14).
-- **Minimize** sends the window to the **panel**: it flies, scaled down, from where it was into its thumbnail. The remaining windows take the room; if one is left, it fills the screen.
-  - **Minimizing shows the way too** (agreed, 2026-10-14): an outline travels from the window to its thumbnail, and the thumbnail flashes once when it lands. Windows sent to the panel by maximize flash there as well.
+- **Minimize** sends the window to the **panel**: it flies, scaled down, from where it was into its app's icon. The remaining windows take the room; if one is left, it fills the screen.
+  - **Minimizing shows the way too** (agreed, 2026-10-14): an outline travels from the window to its app's icon, and the icon flashes once when it lands. Windows sent to the panel by maximize flash there as well.
 - **Maximize** has the effect of minimizing every other window: they fly to the panel and this window fills the work area. This is **maximized mode**.
   - While maximized, the maximize button shows **restore** (two overlapping squares). Restore brings back the windows that were tiled before, in their old order.
   - **Clicking a panel window** in maximized mode makes it the maximized window; the one that was maximized goes to the panel.
@@ -249,14 +249,14 @@ Every window has four buttons: **close, minimize, maximize, full screen**.
   - Minimizing or closing the maximized window also ends the mode and brings the others back.
   - Opening a new app ends the mode: the new window is tiled with the maximized one.
 - **The panel lists every open app** (agreed, 2026-10-14; replaces "minimized windows only"), one entry per app in the order the apps were opened, as in the macOS Dock. It is on the left edge, below the top bar, always there, with one width. Its width comes out of the work area.
-  - An entry is a live thumbnail of the app's most recently used window (or, when all are minimized, the most recently minimized), showing its top-left part, larger, with a large app icon resting on its bottom-left corner.
-  - **On screen or minimized:** an app with a window on screen has a bar at the panel's edge beside its entry; an app whose windows are all minimized has its thumbnail dimmed.
-  - **Clicking an entry** brings the window forward wherever it is, with the travel outline and the flash; a minimized one comes back to the window area; a full-screen one's space slides in.
+  - **An entry is the app's icon only** (agreed, 2026-10-29; replaces the live thumbnail). Hovering it shows the scaled-down windows (below).
+  - **On screen or minimized:** an app with a window on screen has a bar at the panel's edge beside its entry; an app whose windows are all minimized has its icon dimmed.
+  - **Clicking an entry** (agreed, 2026-10-29): with **one window**, that window is brought forward wherever it is; with **several**, the one **minimized to the panel last** comes back to the window area (when none is minimized, the most recently used one is brought forward). Always with the travel outline and the flash; a full-screen one's space slides in.
   - **While the pointer is in an enlarged view** of a window that is on screen, that window's border on the desktop pulses slowly (one soft pulse every 1.2 s), so the eye finds it before clicking. (agreed, 2026-10-14)
   - At its top: **minimize all** and **close all**. Close all asks for a second click within 3 s ("Click again to close all"), since it can lose work.
   - At its bottom is the **apps button** (a grid of dots), which opens the launcher, so an app can be started again with the pointer alone.
   - **Hovering** a panel window shows it enlarged, past the panel's edge, with full-size buttons: **close**, **back to the window area**, **maximize** and **full screen**; a short label says what the hovered button does. The enlarged view works like the thumbnail: a click restores, a drag tiles. (agreed, 2026-10-14)
-  - **Windows of one app are grouped** (agreed, 2026-10-14): one entry per app, with the **number of windows** in a red badge, in a large font, at its top-right corner.
+  - **Windows of one app are grouped** (agreed, 2026-10-14): one entry per app, with the **number of windows** in a red badge, in a large font, at the icon's top-right corner.
   - **Hovering a group of several** lays all its windows out, enlarged, **over the window area**: a grid that starts beside the panel and grows to the right, then to a new row below, on a **semi-transparent** backing with a heading ("Notes: 3 windows"). The pointer can move between them; each has the same buttons as the single enlarged view, and a click brings that one back. **Esc** closes the view.
   - **Right-click an entry:** **Show all** (when the app has fewer than 4 windows and some are minimized) brings them back to the window area; **Minimize** sends the ones on screen to the panel; **Close all** closes them. In the enlarged views, the second button minimizes a window on screen and brings back a minimized one.
   - A **click** restores the window (outside maximized mode), which flies out of its thumbnail into a new tile.

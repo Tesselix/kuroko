@@ -547,6 +547,41 @@ test "every open app is in the panel; clicking one on screen brings it forward" 
     try std.testing.expectEqual(@as(usize, 0), comp.shelf.items.len);
 }
 
+test "panel: clicking an app with several windows restores the last minimized" {
+    const gpa = std.testing.allocator;
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+    var now: i64 = 0;
+    const n1 = try comp.launch(3, now);
+    const n2 = try comp.launch(3, now);
+    const n3 = try comp.launch(3, now);
+    settle(comp, &now);
+    comp.shelve(n2, now);
+    settle(comp, &now);
+    comp.shelve(n1, now);
+    settle(comp, &now);
+    // n1 went to the panel last: the click brings it back, n2 stays.
+    comp.handleInput(.{ .pointer_motion = .{ .x = 38, .y = 100 } }, now);
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = true, .x = 38, .y = 100 } }, now);
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = false, .x = 38, .y = 100 } }, now);
+    try std.testing.expect(comp.focused.?.eql(n1));
+    try std.testing.expectEqual(@as(usize, 1), comp.shelf.items.len);
+    try std.testing.expect(comp.shelf.items[0].eql(n2));
+    settle(comp, &now);
+    // Again: now n2.
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = true, .x = 38, .y = 100 } }, now);
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = false, .x = 38, .y = 100 } }, now);
+    try std.testing.expect(comp.focused.?.eql(n2));
+    try std.testing.expectEqual(@as(usize, 0), comp.shelf.items.len);
+    settle(comp, &now);
+    // None minimized: the click brings up the most recently used one.
+    comp.focus(n3, now);
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = true, .x = 38, .y = 100 } }, now);
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = false, .x = 38, .y = 100 } }, now);
+    try std.testing.expect(comp.focused.?.eql(n3));
+    try std.testing.expectEqual(@as(usize, 3), comp.tiles.items.len);
+}
+
 test "login start: apps launch into the panel, the desktop stays clean" {
     const gpa = std.testing.allocator;
     const w = 1920;

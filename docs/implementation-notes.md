@@ -21,6 +21,7 @@ touches. Change the code and this file together.
 | Center marker visibility (Look and Controls) | While scrolling and while the map is open; fades over 0.4 s after 1 s at rest | `txwidgets/src/doc_view.zig` |
 | Exact theme colors (Look and Controls) | First values in `txcore/src/theme.zig`, light and dark | |
 | Text stack and 2D rendering (Widget Framework) | Stopgap: own CPU rasterizer and pre-rendered Inter atlases; no shaping, no bidi, no Hebrew yet. The compositor's frame goes to the GPU as a draw list (see "GPU rendering") | `txwidgets/src/canvas.zig`, `font.zig`, `draw_list.zig` |
+| Panel icon size (Top-Level) | 52 px icons, 14 px apart, centered in the 76 px panel; a status line runs under the icon | `txcomp/src/compositor.zig` |
 | Quick drag out of the panel (Top-Level) | Released within 0.3 s of the press; `quick_drag_ms` | `txcomp/src/compositor.zig` |
 | Reorder preview (Top-Level, Swapping) | The pointer rests 0.12 s on a tile before its window moves aside (`reorder_dwell_ms`); a drop before that still swaps. The target is found in the tiles as they were when the drag began, so a swap that moves the borders cannot flip it back and forth | `txcomp/src/compositor.zig` |
 | Where a restored window goes after maximize (Top-Level) | The old tile order; the maximized window keeps its place, or goes last if it came from the panel | `txcomp/src/compositor.zig` |
@@ -345,7 +346,7 @@ touches. Change the code and this file together.
 - No clipboard, no text area, no fill helper, no search field, no date picker
   yet.
 - The launcher uses a solid tint; the blurred snapshot needs a blur pass in the GPU renderer.
-- The panel (minimized windows) has no hover preview and no scrolling; entries that do not fit above the apps button are not shown.
+- The panel has no scrolling; entries that do not fit above the apps button are not shown.
 - Full-screen spaces exist only for full-screen windows; there are no general workspaces yet.
 - A window that goes to the panel before it was ever tiled is drawn at its optimal size for the thumbnail.
 - Menus in the title bar are labels only; dropdowns are not built.
