@@ -31,45 +31,45 @@ pub fn build(b: *std.Build) void {
 
     // ---------------------------------------------------------- modules
 
-    const core = b.addModule("txcore", .{
-        .root_source_file = b.path("sdk/txcore/src/root.zig"),
+    const core = b.addModule("krkcore", .{
+        .root_source_file = b.path("sdk/krkcore/src/root.zig"),
         .target = target,
         .optimize = optimize,
-        // Sockets go through libc (see sdk/txcore/src/ipc.zig).
+        // Sockets go through libc (see sdk/krkcore/src/ipc.zig).
         .link_libc = true,
     });
-    const widgets = b.addModule("txwidgets", .{
-        .root_source_file = b.path("sdk/txwidgets/src/root.zig"),
+    const widgets = b.addModule("krkwidgets", .{
+        .root_source_file = b.path("sdk/krkwidgets/src/root.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "txcore", .module = core }},
+        .imports = &.{.{ .name = "krkcore", .module = core }},
     });
-    const comp = b.addModule("txcomp", .{
-        .root_source_file = b.path("de/txcomp/src/root.zig"),
+    const comp = b.addModule("krkcomp", .{
+        .root_source_file = b.path("de/krkcomp/src/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "txcore", .module = core },
-            .{ .name = "txwidgets", .module = widgets },
+            .{ .name = "krkcore", .module = core },
+            .{ .name = "krkwidgets", .module = widgets },
         },
     });
-    const wl = b.addModule("txwl", .{
-        .root_source_file = b.path("de/txwl/src/root.zig"),
+    const wl = b.addModule("krkwl", .{
+        .root_source_file = b.path("de/krkwl/src/root.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
         .imports = &.{
-            .{ .name = "txcore", .module = core },
-            .{ .name = "txwidgets", .module = widgets },
+            .{ .name = "krkcore", .module = core },
+            .{ .name = "krkwidgets", .module = widgets },
         },
     });
-    const gpu = b.addModule("txgl", .{
-        .root_source_file = b.path("de/txgl/src/root.zig"),
+    const gpu = b.addModule("krkgl", .{
+        .root_source_file = b.path("de/krkgl/src/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "txcore", .module = core },
-            .{ .name = "txwidgets", .module = widgets },
+            .{ .name = "krkcore", .module = core },
+            .{ .name = "krkwidgets", .module = widgets },
         },
     });
     const controls = b.addModule("controls", .{
@@ -77,8 +77,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "txcore", .module = core },
-            .{ .name = "txwidgets", .module = widgets },
+            .{ .name = "krkcore", .module = core },
+            .{ .name = "krkwidgets", .module = widgets },
         },
     });
 
@@ -87,8 +87,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "txcore", .module = core },
-            .{ .name = "txwidgets", .module = widgets },
+            .{ .name = "krkcore", .module = core },
+            .{ .name = "krkwidgets", .module = widgets },
         },
     });
 
@@ -96,43 +96,43 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run all unit tests");
     const headless = b.createModule(.{
-        .root_source_file = b.path("de/txsim/src/headless_test.zig"),
+        .root_source_file = b.path("de/krksdl/src/headless_test.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "txcore", .module = core },
-            .{ .name = "txwidgets", .module = widgets },
-            .{ .name = "txcomp", .module = comp },
+            .{ .name = "krkcore", .module = core },
+            .{ .name = "krkwidgets", .module = widgets },
+            .{ .name = "krkcomp", .module = comp },
             .{ .name = "controls", .module = controls },
             .{ .name = "languages", .module = languages },
         },
     });
     const apps_test = b.createModule(.{
-        .root_source_file = b.path("de/txdesk/src/apps/root.zig"),
+        .root_source_file = b.path("de/krkdesk/src/apps/root.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "txcore", .module = core }},
+        .imports = &.{.{ .name = "krkcore", .module = core }},
     });
     const trust_test = b.createModule(.{
-        .root_source_file = b.path("de/txdesk/src/trust.zig"),
+        .root_source_file = b.path("de/krkdesk/src/trust.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "txcore", .module = core }},
+        .imports = &.{.{ .name = "krkcore", .module = core }},
     });
     const focus_test = b.createModule(.{
-        .root_source_file = b.path("de/txdesk/src/focus.zig"),
+        .root_source_file = b.path("de/krkdesk/src/focus.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "txcore", .module = core }},
+        .imports = &.{.{ .name = "krkcore", .module = core }},
     });
     const icons_test = b.createModule(.{
-        .root_source_file = b.path("de/txdesk/src/icons.zig"),
+        .root_source_file = b.path("de/krkdesk/src/icons.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "txcore", .module = core }},
+        .imports = &.{.{ .name = "krkcore", .module = core }},
     });
     const stub_test = b.createModule(.{
-        .root_source_file = b.path("de/txsim/src/sdl_stub.zig"),
+        .root_source_file = b.path("de/krksdl/src/sdl_stub.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -144,12 +144,12 @@ pub fn build(b: *std.Build) void {
     // --------------------------------------------------- desktop service
 
     const desk = b.addExecutable(.{
-        .name = "txdesk",
+        .name = "krkdesk",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("de/txdesk/src/main.zig"),
+            .root_source_file = b.path("de/krkdesk/src/main.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "txcore", .module = core }},
+            .imports = &.{.{ .name = "krkcore", .module = core }},
         }),
     });
     b.installArtifact(desk);
@@ -162,21 +162,21 @@ pub fn build(b: *std.Build) void {
     const no_sim = b.option(bool, "no-sim", "Skip the SDL3 simulator") orelse false;
     if (!no_sim) {
         const sim_mod = b.createModule(.{
-            .root_source_file = b.path("de/txsim/src/main.zig"),
+            .root_source_file = b.path("de/krksdl/src/main.zig"),
             .target = target,
             .optimize = optimize,
             .link_libc = true,
             .imports = &.{
-                .{ .name = "txcore", .module = core },
-                .{ .name = "txwidgets", .module = widgets },
-                .{ .name = "txcomp", .module = comp },
+                .{ .name = "krkcore", .module = core },
+                .{ .name = "krkwidgets", .module = widgets },
+                .{ .name = "krkcomp", .module = comp },
                 .{ .name = "controls", .module = controls },
                 .{ .name = "languages", .module = languages },
-                .{ .name = "txwl", .module = wl },
-                .{ .name = "txgl", .module = gpu },
+                .{ .name = "krkwl", .module = wl },
+                .{ .name = "krkgl", .module = gpu },
             },
         });
-        // SDL3 is declared by hand in de/txsim/src/sdl.zig (no C headers
+        // SDL3 is declared by hand in de/krksdl/src/sdl.zig (no C headers
         // needed); only the library is linked. Homebrew on Apple Silicon in
         // case pkg-config is missing.
         if (target.result.os.tag == .macos) {
@@ -199,7 +199,7 @@ pub fn build(b: *std.Build) void {
                 .name = "SDL3",
                 .version = .{ .major = 0, .minor = 0, .patch = 0 },
                 .root_module = b.createModule(.{
-                    .root_source_file = b.path("de/txsim/src/sdl_stub.zig"),
+                    .root_source_file = b.path("de/krksdl/src/sdl_stub.zig"),
                     .target = target,
                     .optimize = optimize,
                 }),
@@ -210,7 +210,7 @@ pub fn build(b: *std.Build) void {
         } else {
             sim_mod.linkSystemLibrary("SDL3", .{});
         }
-        const sim = b.addExecutable(.{ .name = "txsim", .root_module = sim_mod });
+        const sim = b.addExecutable(.{ .name = "krksdl", .root_module = sim_mod });
         b.installArtifact(sim);
         const run_sim = b.addRunArtifact(sim);
         if (b.args) |args| run_sim.addArgs(args);

@@ -13,8 +13,8 @@
 //!  - Stopwatch    a small app (fixed size)
 
 const std = @import("std");
-const core = @import("txcore");
-const tw = @import("txwidgets");
+const core = @import("krkcore");
+const tw = @import("krkwidgets");
 
 const Window = tw.Window;
 const NodeId = tw.NodeId;

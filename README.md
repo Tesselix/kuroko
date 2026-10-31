@@ -21,9 +21,9 @@ The repository has three parts. `de/` and `sim/` depend on `sdk/`, and never on 
 
 | Folder | What it is |
 | --- | --- |
-| `sdk/txcore/` | Shared by everything: binary format and repair ladder, object registry (handles, guards), geometry, input events, theme roles, animation, wheel bands, timing histograms, IPC helpers |
-| `sdk/txwidgets/` | Widget library (Mode A): canvas rasterizer, fonts, widget tree and layout, buttons, toggles, checkboxes, progress, text fields, the document view with the scrolling behavior |
-| `sdk/txdk/` | SDK for other languages (C ABI, Mode B UI host, bindings). Not started |
+| `sdk/krkcore/` | Shared by everything: binary format and repair ladder, object registry (handles, guards), geometry, input events, theme roles, animation, wheel bands, timing histograms, IPC helpers |
+| `sdk/krkwidgets/` | Widget library (Mode A): canvas rasterizer, fonts, widget tree and layout, buttons, toggles, checkboxes, progress, text fields, the document view with the scrolling behavior |
+| `sdk/krkdk/` | SDK for other languages (C ABI, Mode B UI host, bindings). Not started |
 | `sdk/gallery/` | The gallery (the Controls app): every widget's behavior in one place, growing with the library |
 | `sdk/tools/fontgen/` | Generates the font atlases (stopgap until the text stack is chosen) |
 
@@ -31,12 +31,12 @@ The repository has three parts. `de/` and `sim/` depend on `sdk/`, and never on 
 
 | Folder | What it is |
 | --- | --- |
-| `de/txcomp/` | Compositor core: window model, attention tiling, chrome, top bar, launcher, shelf, event publisher. Backend-independent |
-| `de/txwl/` | Kuroko as a Wayland server: the wire format, the core and xdg-shell protocols in pure Zig. Apps' windows become compositor windows like Kuroko's own |
-| `de/txgl/` | The GPU renderer: draws the compositor's recorded frames with OpenGL ES 3.0 (OpenGL 3.3 on the Mac). Shared by every backend |
-| `de/txdesk/` | Desktop services. Now: a stub context hub that prints the scene graph as text |
+| `de/krkcomp/` | Compositor core: window model, attention tiling, chrome, top bar, launcher, shelf, event publisher. Backend-independent |
+| `de/krkwl/` | Kuroko as a Wayland server: the wire format, the core and xdg-shell protocols in pure Zig. Apps' windows become compositor windows like Kuroko's own |
+| `de/krkgl/` | The GPU renderer: draws the compositor's recorded frames with OpenGL ES 3.0 (OpenGL 3.3 on the Mac). Shared by every backend |
+| `de/krkdesk/` | Desktop services. Now: a stub context hub that prints the scene graph as text |
 | `de/apps/languages/` | The language dialog: Kuroko's own dialog, built with the widget library like any app |
-| `de/txsim/` | Simulator backend: runs the compositor in one SDL3 window on macOS. Also holds the headless test of the whole stack |
+| `de/krksdl/` | Simulator backend: runs the compositor in one SDL3 window on macOS. Also holds the headless test of the whole stack |
 
 **`sim/`: krksim, the device simulator**
 
@@ -68,7 +68,7 @@ zig build run           # the simulator: a clean desktop, nothing started; the a
 zig build run -- --panel   # Controls, Scroll Lab and Notes wait in the panel
 zig build run -- --tiled   # all five apps open on the desktop
 zig build run -- --dark    # dark theme
-zig build run -- --cpu     # draw on the CPU instead of the GPU (also TX_GPU=off)
+zig build run -- --cpu     # draw on the CPU instead of the GPU (also KRK_GPU=off)
 zig build run-desk      # in a second terminal: the desktop service prints the scene
 ```
 
@@ -106,7 +106,7 @@ CodeLLDB (`vadimcn.vscode-lldb`, needed for Run and Debug).
   - *Kuroko (script)*: plays a scripted session you pick, then stays open
   - *Kuroko (Debug build)*: a Debug build in `zig-out/debug`, for stepping
     through code
-  - *Kuroko + desktop service*: the simulator and `txdesk` together
+  - *Kuroko + desktop service*: the simulator and `krkdesk` together
 - **Tasks** (Terminal → Run Task…): Build (Cmd+Shift+B), Build (Debug), Test,
   and the same run variants without a debugger. Compile errors appear in the
   Problems panel.
@@ -136,13 +136,13 @@ read-only at `/mnt/shared` (`make ubuntu VM_SHARE=...` if it is elsewhere):
 sh /mnt/shared/kuroko/check.sh   # is the VM ready? (changes nothing)
 sh /mnt/shared/kuroko/setup.sh   # once: libSDL3, Mesa, kmscube, video/render/input groups
 sh /mnt/shared/kuroko/run.sh     # the compositor, desktop and apps, full screen
-sh /mnt/shared/kuroko/run.sh --dark --tiled   # txsim options pass through (--panel, --tiled, --dark)
-TX_MODE=1920x1200 sh /mnt/shared/kuroko/run.sh   # another screen size
+sh /mnt/shared/kuroko/run.sh --dark --tiled   # krksdl options pass through (--panel, --tiled, --dark)
+KRK_MODE=1920x1200 sh /mnt/shared/kuroko/run.sh   # another screen size
 ```
 
 The screen is 2560x1440 by default, the size of the Mac screen UTM shows
 it on, so each VM pixel is one screen pixel and text stays sharp. On
-another screen, set `TX_MODE` to its size; a size the virtual GPU does not
+another screen, set `KRK_MODE` to its size; a size the virtual GPU does not
 list is set as a custom mode.
 
 A third-party app for comparison, Google Chrome, runs the same way (in cage, full
@@ -151,7 +151,7 @@ screen; Kuroko cannot host outside apps until it is a Wayland server):
 ```sh
 sh /mnt/shared/kuroko/browser.sh --install   # once, from Google's apt repository (arm64)
 sh /mnt/shared/kuroko/browser.sh             # quit with Ctrl+Shift+Q; joins a running Kuroko
-TX_GPU=off sh /mnt/shared/kuroko/browser.sh  # CPU drawing, if the screen stays blank
+KRK_GPU=off sh /mnt/shared/kuroko/browser.sh  # CPU drawing, if the screen stays blank
 ```
 
 `run.sh` also starts the desktop service in the background. It scans for
@@ -160,31 +160,31 @@ them after the built-in apps. They open in Kuroko's tiles: Kuroko is
 their Wayland server (`wayland-kuroko-0` in the runtime directory), so
 the compositor gives each window its size and place. Any Wayland app can
 be pointed at it by hand: `WAYLAND_DISPLAY=wayland-kuroko-0 app`. By hand:
-`~/.cache/kuroko/bin/txdesk apps list` (or `apps scan --verbose`).
+`~/.cache/kuroko/bin/krkdesk apps list` (or `apps scan --verbose`).
 Trust: any installed app is trusted; other apps, files and folders are
-marked by hand with `txdesk trust app|file|folder <path> trusted|untrusted|clear`
-(`txdesk trust list`, `txdesk trust check <path>`). The desktop service's
-log shows each window's app, PID, signature and trust. txdesk also records
+marked by hand with `krkdesk trust app|file|folder <path> trusted|untrusted|clear`
+(`krkdesk trust list`, `krkdesk trust check <path>`). The desktop service's
+log shows each window's app, PID, signature and trust. krkdesk also records
 which apps are used (`facts.krkde`) and writes the launcher's Focus and
 Recent (`focus.krkde`); the launcher shows Focus, Recent, then the other apps.
 The top bar's Learning switch pauses the recording.
-The desktop service's log is `~/.cache/kuroko/txdesk.log`; the
-simulator's is `txsim.log`. Start `run.sh`
+The desktop service's log is `~/.cache/kuroko/krkdesk.log`; the
+simulator's is `krksdl.log`. Start `run.sh`
 from the VM's console, logged in as yourself: cage needs the console's seat.
-To quit, run `pkill txsim` over SSH (it prints a timing summary to the log); `pkill -9 txsim` if it hangs.
+To quit, run `pkill krksdl` over SSH (it prints a timing summary to the log); `pkill -9 krksdl` if it hangs.
 
 If the shared folder shows the Mac's owner (uid 501, group 20) and you cannot
 read it, copy it to your home folder first and run from there:
 `sudo cp -r /mnt/shared/kuroko ~/kuroko && sudo chown -R $USER: ~/kuroko`.
 
 Cross-compiling needs no SDL3 for the target on the Mac: the build links
-against a stub with the same names (`de/txsim/src/sdl_stub.zig`), and the
+against a stub with the same names (`de/krksdl/src/sdl_stub.zig`), and the
 VM's own `libSDL3.so.0` is used at run time.
 
 ## Linux (later)
 
 Kuroko's own Linux backend (no wlroots; see the Top-Level Design,
 "Foundation") drives the screen with libdrm/GBM/EGL and input with
-libinput and libseat, and draws with the same GPU renderer (`txgl`). It
+libinput and libseat, and draws with the same GPU renderer (`krkgl`). It
 runs in a Linux VM (UTM on the Mac); see the Top-Level Design,
 "Development environment".

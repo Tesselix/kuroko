@@ -6,7 +6,7 @@ set -e
 sudo apt-get update
 # libSDL3; the GBM/EGL/GLES libraries; Mesa's drivers (virgl for UTM's
 # virtio-gpu-gl); cage, the Wayland kiosk run.sh shows Kuroko in, and
-# wlr-randr to set its screen size (TX_MODE);
+# wlr-randr to set its screen size (KRK_MODE);
 # kmscube and drm-info to test the screen alone.
 sudo apt-get install -y libsdl3-0 libgbm1 libegl1 libegl-mesa0 libgles2 \
     libgl1-mesa-dri cage wlr-randr kmscube drm-info

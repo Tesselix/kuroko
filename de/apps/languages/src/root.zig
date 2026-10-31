@@ -5,10 +5,10 @@
 //! the user's, at least one always checked; Cancel, or Done to apply.
 //!
 //! It knows nothing of the compositor: it gets the languages and a
-//! callback for Done (txdesk on Linux, the simulator's backend here).
+//! callback for Done (krkdesk on Linux, the simulator's backend here).
 
 const std = @import("std");
-const tw = @import("txwidgets");
+const tw = @import("krkwidgets");
 
 const Window = tw.Window;
 const NodeId = tw.NodeId;

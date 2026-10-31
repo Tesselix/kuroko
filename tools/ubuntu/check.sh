@@ -23,10 +23,10 @@ glibc=$(ldd --version 2>/dev/null | head -n1 | grep -o '[0-9]*\.[0-9]*$')
 ok "glibc $glibc (needs 2.28 or newer)"
 fs=$(findmnt -no FSTYPE -T "$here" 2>/dev/null)
 ok "shared folder: $here ($fs)"
-if [ -f "$here/bin/txsim" ] && [ -f "$here/bin/txdesk" ]; then
+if [ -f "$here/bin/krksdl" ] && [ -f "$here/bin/krkdesk" ]; then
     ok "binaries present"
 else
-    bad "no bin/txsim or bin/txdesk in $here: run  make ubuntu  on the Mac"
+    bad "no bin/krksdl or bin/krkdesk in $here: run  make ubuntu  on the Mac"
 fi
 
 echo "Display (KMS/DRM)"
@@ -68,9 +68,9 @@ for l in libSDL3.so.0 libgbm.so.1 libEGL.so.1 libEGL_mesa.so.0 libGLESv2.so.2; d
 done
 dri=$(ls /usr/lib/aarch64-linux-gnu/dri/virtio_gpu_dri.so /usr/lib/aarch64-linux-gnu/dri/*virtio* 2>/dev/null | head -n1)
 [ -n "$dri" ] && ok "Mesa virgl driver $dri" || warn "no Mesa virtio driver found (libgl1-mesa-dri / mesa-libgallium)"
-if [ -f "$here/bin/txsim" ]; then
-    nf=$(ldd "$here/bin/txsim" 2>/dev/null | grep 'not found')
-    [ -z "$nf" ] && ok "txsim resolves all its libraries" || bad "txsim: $nf"
+if [ -f "$here/bin/krksdl" ]; then
+    nf=$(ldd "$here/bin/krksdl" 2>/dev/null | grep 'not found')
+    [ -z "$nf" ] && ok "krksdl resolves all its libraries" || bad "krksdl: $nf"
 fi
 
 command -v cage >/dev/null && ok "cage $(cage -v 2>&1 | head -n1)" || bad "cage missing: run setup.sh"
@@ -82,7 +82,7 @@ esac
 echo "Session"
 holder=$(pgrep -l -x 'Xorg|Xwayland|gnome-shell|kwin_wayland|weston|sway|mutter|cage' 2>/dev/null)
 [ -z "$holder" ] && ok "nothing else holds the screen" || bad "another display server is running: $holder"
-pgrep -x txsim >/dev/null && bad "txsim is already running"
+pgrep -x krksdl >/dev/null && bad "krksdl is already running"
 [ -n "$XDG_RUNTIME_DIR" ] || [ -d "/run/user/$(id -u)" ] && ok "runtime dir /run/user/$(id -u)" \
     || warn "no XDG_RUNTIME_DIR; Kuroko sockets need one (log in on the console or over SSH)"
 if [ -n "$SSH_CONNECTION" ]; then

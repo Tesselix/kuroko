@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs a third-party app, Google Chrome, on the VM's screen the same way
 # run.sh runs Kuroko: inside cage, as a Wayland client. It checks that the
-# VM can run a heavy GPU app before Kuroko hosts such apps itself (txsim is
+# VM can run a heavy GPU app before Kuroko hosts such apps itself (krksdl is
 # not a Wayland server yet, so Chrome cannot open inside Kuroko).
 #
 #   sh browser.sh --install   once: Chrome from Google's apt repository
@@ -12,8 +12,8 @@
 #                             cage and shows over Kuroko (works over SSH)
 #   sh browser.sh https://example.org
 #
-#   TX_GPU=off sh browser.sh  draw on the CPU, if the GPU path shows nothing
-#   TX_MODE=2560x1600 sh browser.sh   screen size, as in run.sh
+#   KRK_GPU=off sh browser.sh  draw on the CPU, if the GPU path shows nothing
+#   KRK_MODE=2560x1600 sh browser.sh   screen size, as in run.sh
 #
 # Run it from the VM's console (cage needs the console's seat).
 # Seen on UTM (virgl) with Chrome 156: EGL refuses an ES 3.0 context, so
@@ -52,7 +52,7 @@ if [ -z "$XDG_RUNTIME_DIR" ] && [ -d "/run/user/$(id -u)" ]; then
 fi
 # Wayland directly (no XWayland), and no first-run dialogs.
 set -- --ozone-platform=wayland --no-first-run --no-default-browser-check "$@"
-if [ "$TX_GPU" = off ]; then
+if [ "$KRK_GPU" = off ]; then
     set -- --disable-gpu "$@"
 fi
 log="$cache/browser.log"
@@ -72,26 +72,26 @@ if ! command -v cage >/dev/null; then
 fi
 
 # The same cage settings as run.sh (see the reasons there).
-export WLR_RENDERER="${TX_WLR_RENDERER:-gles2}"
+export WLR_RENDERER="${KRK_WLR_RENDERER:-gles2}"
 export WLR_NO_HARDWARE_CURSORS=1
-TX_MODE="${TX_MODE-2560x1440}"
-if [ -n "$TX_MODE" ] && ! command -v wlr-randr >/dev/null; then
+KRK_MODE="${KRK_MODE-2560x1440}"
+if [ -n "$KRK_MODE" ] && ! command -v wlr-randr >/dev/null; then
     echo "wlr-randr is missing, so the screen stays at the VM's size: sudo apt install wlr-randr" >&2
-    TX_MODE=""
+    KRK_MODE=""
 fi
-export TX_MODE
+export KRK_MODE
 
-echo "== $(date '+%F %T')  mode=${TX_MODE:-default}  gpu=${TX_GPU:-on}  args: $*" >"$log"
+echo "== $(date '+%F %T')  mode=${KRK_MODE:-default}  gpu=${KRK_GPU:-on}  args: $*" >"$log"
 status=0
 cage -- sh -c '
-    if [ -n "$TX_MODE" ]; then
+    if [ -n "$KRK_MODE" ]; then
         out=$(wlr-randr | head -n1 | cut -d" " -f1)
-        if wlr-randr --output "$out" --mode "$TX_MODE" 2>/dev/null; then
-            echo "screen: $out at $TX_MODE"
-        elif wlr-randr --output "$out" --custom-mode "$TX_MODE"; then
-            echo "screen: $out at $TX_MODE (custom mode)"
+        if wlr-randr --output "$out" --mode "$KRK_MODE" 2>/dev/null; then
+            echo "screen: $out at $KRK_MODE"
+        elif wlr-randr --output "$out" --custom-mode "$KRK_MODE"; then
+            echo "screen: $out at $KRK_MODE (custom mode)"
         else
-            echo "screen: could not set $TX_MODE on $out"
+            echo "screen: could not set $KRK_MODE on $out"
         fi
     fi
     exec "$0" "$@"' "$browser" "$@" >>"$log" 2>&1 || status=$?

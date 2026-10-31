@@ -8,41 +8,41 @@ touches. Change the code and this file together.
 
 | Question (document) | What the code does now | Where |
 | --- | --- | --- |
-| Type ID registry: one space or split (Top-Level) | High byte names the component: `0x01` assets, `0x02` compositor → services, `0x03` services → compositor, `0x04` widget protocol, `0x7F` tests | `sdk/txcore/src/types.zig` |
-| Which row a new window goes to (Top-Level) | By order: windows 1–2 in row 0, 3–4 in row 1 | `de/txcomp/src/tiling.zig` |
-| Window fill of its tile | 99% (the user, 2026-10-28; was 95%); `tiling.Params.fill` | `de/txcomp/src/tiling.zig` |
-| Growable windows | A window with a document view; the rest have fixed content | `sdk/txwidgets/src/window.zig` |
-| Optimal size of a framework window | Measured from the widget tree unless the app gives a size | `sdk/txwidgets/src/window.zig` |
-| Opening a 5th window (Top-Level, suggestion) | The least recently focused window goes to the shelf | `de/txcomp/src/compositor.zig` |
-| Notch rates between bands (Look and Controls) | Fast from 7 notches/s, very fast from 16 notches/s, bursts up to 1.2 s; parameters in `txcore.wheel.Params` | `sdk/txcore/src/wheel.zig` |
-| Map: pages and where sliding starts (Look and Controls) | 5 pages, sliding from the middle | `sdk/txwidgets/src/scroll.zig` |
-| Magnifier size (Look and Controls) | 6 lines, up to 520 px or two thirds of the content width | `sdk/txwidgets/src/doc_view.zig` |
-| Key for "back after a jump" (Look and Controls) | Alt+← (Option+← on a Mac); 16 positions kept | `sdk/txwidgets/src/doc_view.zig` |
-| Center marker visibility (Look and Controls) | While scrolling and while the map is open; fades over 0.4 s after 1 s at rest | `sdk/txwidgets/src/doc_view.zig` |
-| Exact theme colors (Look and Controls) | First values in `sdk/txcore/src/theme.zig`, light and dark | |
-| Text stack and 2D rendering (Widget Framework) | Stopgap: own CPU rasterizer and pre-rendered Inter atlases; no shaping, no bidi, no Hebrew yet. The compositor's frame goes to the GPU as a draw list (see "GPU rendering") | `sdk/txwidgets/src/canvas.zig`, `font.zig`, `draw_list.zig` |
-| Top-bar menu icons (Top-Level) | 32 px buttons side by side with no gap, 2 px from the right edge, so the row is one target; the date and time sit right-aligned in a fixed 124 px slot in the corner, so the icons do not move as it changes; the learning indicator sits 8 px left of the language icon. The simulator formats the date as "Fri Oct 30  13:35" (24-hour, English) until locale formatting exists | `de/txcomp/src/shell.zig` |
-| Top-bar menus (Top-Level) | Under the bar at the right, 8 px from the edge; control center 320 px wide, device center 380, the others 300. Details (a connection's, a device's) replace the menu's content in the same panel, as on macOS, not a separate dialog. Wi-Fi joins a network with one click; the password prompt comes with the backend. A user action changes `menus.System` at once; the desktop service will confirm or correct it, and the compositor never waits for it | `de/txcomp/src/menus.zig` |
-| Dialogs (Top-Level, "Dialogs") | Kept outside the window registry, in their own list (`dialogs.zig`); the content gets a 6 px frame with 14 px corners, so its square corners stay inside. Dimming for a modal one is the theme's shadow color at alpha 90, over the parent's frame or the whole screen. A window asks for a dialog through `Surface.take_dialog` (Wayland: a new toplevel with a parent), picked up once per frame. A second request from the same desktop dialog name raises the open one instead of opening another | `de/txcomp/src/dialogs.zig`, `de/txcomp/src/compositor.zig` |
-| Mobile-first widgets (Widget Framework) | Rows are 44 px, 54 with a subtitle; a grouped list's card takes the other of `surface` and `surface_alt` from the window's background; a header bar centers its title on the whole bar; a scroll area scrolls by 44 px lines with the document view's wheel physics. A top-level column now takes the window's height, so a scroll area in it gets the room left | `sdk/txwidgets/src/window.zig` |
-| Panel icon size (Top-Level) | 52 px icons, 14 px apart, centered in the 76 px panel; a status line runs under the icon | `de/txcomp/src/compositor.zig` |
-| Quick drag out of the panel (Top-Level) | Released within 0.3 s of the press; `quick_drag_ms` | `de/txcomp/src/compositor.zig` |
-| Reorder preview (Top-Level, Swapping) | The pointer rests 0.12 s on a tile before its window moves aside (`reorder_dwell_ms`); a drop before that still swaps. The target is found in the tiles as they were when the drag began, so a swap that moves the borders cannot flip it back and forth | `de/txcomp/src/compositor.zig` |
-| Where a restored window goes after maximize (Top-Level) | The old tile order; the maximized window keeps its place, or goes last if it came from the panel | `de/txcomp/src/compositor.zig` |
-| How app and object trust combine (User Signals) | An unknown object leaves the app's level; otherwise the lower of the two | `sdk/txcore/src/trust.zig` |
-| Which apps are trusted (User Signals) | Kuroko's own apps always; an installed app (in the registry) unless the user marks it; any other app only when marked | `sdk/txcore/src/trust.zig`, `de/txcomp/src/compositor.zig` |
-| A mark on a folder (User Signals) | Covers every file under it; the nearest marked folder wins, and a file's own mark wins over any folder | `sdk/txcore/src/trust.zig` |
-| Who decides Focus and Recent (User Signals, Top-Level "Influence files") | txdesk: its recorder writes the facts (`facts.krkde`), its simple predictor the lists (`focus.krkde`); the compositor only reads them | `de/txdesk/src/focus.zig` |
-| What earns Focus, for now | Keyboard-focus time, halving every 3 days, at least 2 minutes' worth; or a cycle that is due (opened in the first hour of the day on ≥ 3 days and on more than half of the last 14 days with use), during today's first hour | `de/txdesk/src/focus.zig` |
-| Footprints (Look and Controls) | A section counts as read after 3 s at the middle of the view while not scrolling; in memory only | `sdk/txwidgets/src/doc_view.zig` |
+| Type ID registry: one space or split (Top-Level) | High byte names the component: `0x01` assets, `0x02` compositor → services, `0x03` services → compositor, `0x04` widget protocol, `0x7F` tests | `sdk/krkcore/src/types.zig` |
+| Which row a new window goes to (Top-Level) | By order: windows 1–2 in row 0, 3–4 in row 1 | `de/krkcomp/src/tiling.zig` |
+| Window fill of its tile | 99% (the user, 2026-10-28; was 95%); `tiling.Params.fill` | `de/krkcomp/src/tiling.zig` |
+| Growable windows | A window with a document view; the rest have fixed content | `sdk/krkwidgets/src/window.zig` |
+| Optimal size of a framework window | Measured from the widget tree unless the app gives a size | `sdk/krkwidgets/src/window.zig` |
+| Opening a 5th window (Top-Level, suggestion) | The least recently focused window goes to the shelf | `de/krkcomp/src/compositor.zig` |
+| Notch rates between bands (Look and Controls) | Fast from 7 notches/s, very fast from 16 notches/s, bursts up to 1.2 s; parameters in `krkcore.wheel.Params` | `sdk/krkcore/src/wheel.zig` |
+| Map: pages and where sliding starts (Look and Controls) | 5 pages, sliding from the middle | `sdk/krkwidgets/src/scroll.zig` |
+| Magnifier size (Look and Controls) | 6 lines, up to 520 px or two thirds of the content width | `sdk/krkwidgets/src/doc_view.zig` |
+| Key for "back after a jump" (Look and Controls) | Alt+← (Option+← on a Mac); 16 positions kept | `sdk/krkwidgets/src/doc_view.zig` |
+| Center marker visibility (Look and Controls) | While scrolling and while the map is open; fades over 0.4 s after 1 s at rest | `sdk/krkwidgets/src/doc_view.zig` |
+| Exact theme colors (Look and Controls) | First values in `sdk/krkcore/src/theme.zig`, light and dark | |
+| Text stack and 2D rendering (Widget Framework) | Stopgap: own CPU rasterizer and pre-rendered Inter atlases; no shaping, no bidi, no Hebrew yet. The compositor's frame goes to the GPU as a draw list (see "GPU rendering") | `sdk/krkwidgets/src/canvas.zig`, `font.zig`, `draw_list.zig` |
+| Top-bar menu icons (Top-Level) | 32 px buttons side by side with no gap, 2 px from the right edge, so the row is one target; the date and time sit right-aligned in a fixed 124 px slot in the corner, so the icons do not move as it changes; the learning indicator sits 8 px left of the language icon. The simulator formats the date as "Fri Oct 30  13:35" (24-hour, English) until locale formatting exists | `de/krkcomp/src/shell.zig` |
+| Top-bar menus (Top-Level) | Under the bar at the right, 8 px from the edge; control center 320 px wide, device center 380, the others 300. Details (a connection's, a device's) replace the menu's content in the same panel, as on macOS, not a separate dialog. Wi-Fi joins a network with one click; the password prompt comes with the backend. A user action changes `menus.System` at once; the desktop service will confirm or correct it, and the compositor never waits for it | `de/krkcomp/src/menus.zig` |
+| Dialogs (Top-Level, "Dialogs") | Kept outside the window registry, in their own list (`dialogs.zig`); the content gets a 6 px frame with 14 px corners, so its square corners stay inside. Dimming for a modal one is the theme's shadow color at alpha 90, over the parent's frame or the whole screen. A window asks for a dialog through `Surface.take_dialog` (Wayland: a new toplevel with a parent), picked up once per frame. A second request from the same desktop dialog name raises the open one instead of opening another | `de/krkcomp/src/dialogs.zig`, `de/krkcomp/src/compositor.zig` |
+| Mobile-first widgets (Widget Framework) | Rows are 44 px, 54 with a subtitle; a grouped list's card takes the other of `surface` and `surface_alt` from the window's background; a header bar centers its title on the whole bar; a scroll area scrolls by 44 px lines with the document view's wheel physics. A top-level column now takes the window's height, so a scroll area in it gets the room left | `sdk/krkwidgets/src/window.zig` |
+| Panel icon size (Top-Level) | 52 px icons, 14 px apart, centered in the 76 px panel; a status line runs under the icon | `de/krkcomp/src/compositor.zig` |
+| Quick drag out of the panel (Top-Level) | Released within 0.3 s of the press; `quick_drag_ms` | `de/krkcomp/src/compositor.zig` |
+| Reorder preview (Top-Level, Swapping) | The pointer rests 0.12 s on a tile before its window moves aside (`reorder_dwell_ms`); a drop before that still swaps. The target is found in the tiles as they were when the drag began, so a swap that moves the borders cannot flip it back and forth | `de/krkcomp/src/compositor.zig` |
+| Where a restored window goes after maximize (Top-Level) | The old tile order; the maximized window keeps its place, or goes last if it came from the panel | `de/krkcomp/src/compositor.zig` |
+| How app and object trust combine (User Signals) | An unknown object leaves the app's level; otherwise the lower of the two | `sdk/krkcore/src/trust.zig` |
+| Which apps are trusted (User Signals) | Kuroko's own apps always; an installed app (in the registry) unless the user marks it; any other app only when marked | `sdk/krkcore/src/trust.zig`, `de/krkcomp/src/compositor.zig` |
+| A mark on a folder (User Signals) | Covers every file under it; the nearest marked folder wins, and a file's own mark wins over any folder | `sdk/krkcore/src/trust.zig` |
+| Who decides Focus and Recent (User Signals, Top-Level "Influence files") | krkdesk: its recorder writes the facts (`facts.krkde`), its simple predictor the lists (`focus.krkde`); the compositor only reads them | `de/krkdesk/src/focus.zig` |
+| What earns Focus, for now | Keyboard-focus time, halving every 3 days, at least 2 minutes' worth; or a cycle that is due (opened in the first hour of the day on ≥ 3 days and on more than half of the last 14 days with use), during today's first hour | `de/krkdesk/src/focus.zig` |
+| Footprints (Look and Controls) | A section counts as read after 3 s at the middle of the view while not scrolling; in memory only | `sdk/krkwidgets/src/doc_view.zig` |
 
 ## Zig version
 
 - Zig 0.16.0, the latest solid version (rule in `docs/dependencies.md`).
   Notes on the APIs and the 0.17 move: `docs/zig-notes.md`.
-- The simulator uses SDL3, declared by hand in `de/txsim/src/sdl.zig`
+- The simulator uses SDL3, declared by hand in `de/krksdl/src/sdl.zig`
   (no `@cImport`).
-- Sockets use libc directly (`sdk/txcore/src/ipc.zig`) because `std.Io`'s
+- Sockets use libc directly (`sdk/krkcore/src/ipc.zig`) because `std.Io`'s
   networking blocks the calling task and the compositor must never wait.
 
 ## Binary format details
@@ -56,7 +56,7 @@ touches. Change the code and this file together.
 
 ## Simulator (macOS)
 
-- Apps run in-process and implement `txwidgets.Surface`, the subset of what
+- Apps run in-process and implement `krkwidgets.Surface`, the subset of what
   Wayland plus the Kuroko protocol will carry.
 - Wheel versus touchpad is guessed from fractional deltas; macOS reports no
   device type. Final tuning of the bands happens on Linux with libinput.
@@ -65,7 +65,7 @@ touches. Change the code and this file together.
 - Launch times are simulated per app (`start_ms`), so the launch placeholder
   and its progress can be seen.
 
-## GPU rendering (txgl)
+## GPU rendering (krkgl)
 
 - **Draw list.** `Canvas` reduces every call to six physical-pixel
   primitives (fill, rounded rect, circle, line, glyph, image) and sends
@@ -76,7 +76,7 @@ touches. Change the code and this file together.
   with the same code, so it is pixel-identical to drawing directly (tested
   per primitive and for whole compositor frames, which also checks that the
   core is deterministic).
-- **Renderer** (`de/txgl/src/renderer.zig`): one shader; every primitive is a
+- **Renderer** (`de/krkgl/src/renderer.zig`): one shader; every primitive is a
   quad. Shapes use the canvas's signed-distance formulas, glyphs one shared
   R8 texture packed on first use, images RGBA textures (swizzled from
   0xAARRGGBB in the shader). Clips are scissor rects; quads are batched
@@ -90,7 +90,7 @@ touches. Change the code and this file together.
   loader (SDL now, EGL on DRM later); nothing links libGL.
 - **Scaled pictures are smoothed** on the GPU (linear filtering); the CPU
   picks nearest pixels. Thumbnails differ slightly between the two paths.
-- **Simulator:** GPU by default; `--cpu` or `TX_GPU=off` keeps the CPU path,
+- **Simulator:** GPU by default; `--cpu` or `KRK_GPU=off` keeps the CPU path,
   and the CPU is the fallback if no GL context or shader works.
   `--snapshot FILE --gpu` reads the GPU frame back (to compare with the
   CPU's).
@@ -104,28 +104,28 @@ touches. Change the code and this file together.
 
 ## Identity and trust
 
-- **Who a window belongs to.** txwl takes the client's PID from the socket
+- **Who a window belongs to.** krkwl takes the client's PID from the socket
   (`SO_PEERCRED`) and its binary from `/proc/<pid>/exe` at connect time. The
   compositor keeps both per window and publishes them before the window's
   `opened` record (`SceneIdentity`, with the window's trust and the app's
   part of it), and again when the trust changes.
-- **Marks.** txdesk keeps the user's marks in `trust.krkde` next to
+- **Marks.** krkdesk keeps the user's marks in `trust.krkde` next to
   `apps.krkde` (`TrustMark`: app, file or folder; trusted or untrusted; the
   time; for an app, its signature: SHA-256 of the binary). It sends them to
   the compositor on connect (`DeskTrust` snapshot) and when they change.
-  `txdesk trust ...` edits the file; a running txdesk notices (stat) and
+  `krkdesk trust ...` edits the file; a running krkdesk notices (stat) and
   resends.
-- **One set of rules** (`sdk/txcore/src/trust.zig`), used by both txdesk and the
-  compositor. The compositor decides; txdesk only stores.
+- **One set of rules** (`sdk/krkcore/src/trust.zig`), used by both krkdesk and the
+  compositor. The compositor decides; krkdesk only stores.
 - **An installed app counts only by its own binary.** A client that claims
   an installed app's id (Wayland app id) with another binary gets no trust
   from it: shown on the VM with a copy of Alacritty at another path.
 - **Marking from the compositor** (`requestTrust`, `markWindowApp`,
-  `markWindowObject`): applies at once, then goes to txdesk
+  `markWindowObject`): applies at once, then goes to krkdesk
   (`TrustRequest`), which saves it and confirms. This is what the window's
   Security menu will call; the menu itself is not built yet (title-bar menus
   are labels only).
-- **Signatures** are computed by txdesk (the compositor never reads a
+- **Signatures** are computed by krkdesk (the compositor never reads a
   binary): when the user marks an app, and for each window's binary in its
   scene printout, cached per file version (size, time, inode). Recorded,
   not yet checked against marks.
@@ -137,7 +137,7 @@ touches. Change the code and this file together.
 
 ## Focus and Recent
 
-- **Facts.** txdesk records one use per window from the scene it already
+- **Facts.** krkdesk records one use per window from the scene it already
   mirrors: opened, closed, and seconds with keyboard focus. The app is its
   binary (from `SceneIdentity`), or its app id for Kuroko's own apps.
   Saved to `facts.krkde` when a window closes and at most once a minute;
@@ -151,13 +151,13 @@ touches. Change the code and this file together.
   no I/O), when the launcher opens after a notice; the lists are frozen
   while it is visible. References it cannot resolve (an app no longer
   installed) are dropped. Without the file, Focus is empty and Recent is
-  this session's launches, so the desktop works without txdesk.
+  this session's launches, so the desktop works without krkdesk.
 - **The launcher** shows Focus, Recent, then all other apps: every app
   once. Focus and Recent share a row when they fit, else Recent goes under
   Focus. Each of their tiles has a reason line: "42 min this week",
   "usually now", "5 min ago", "yesterday".
 - **Pause learning** (the top bar's Learning switch) is published to the
-  services (`SceneSession`); while it is off, txdesk records nothing and
+  services (`SceneSession`); while it is off, krkdesk records nothing and
   ends the uses in progress.
 - **Limits now:**
   - Apps only: nothing reports which file a window shows yet, so entries
@@ -170,14 +170,14 @@ touches. Change the code and this file together.
 
 ## App icons
 
-- **txdesk draws them, the compositor copies pixels.** After each scan,
-  txdesk turns each installed app's icon file (resolved from its desktop
+- **krkdesk draws them, the compositor copies pixels.** After each scan,
+  krkdesk turns each installed app's icon file (resolved from its desktop
   entry) into 64 and 128 px squares, the icon centered, and keeps them in
   `icons.krkde` (`IconImage`, straight-alpha ARGB). Only new or changed icon
   files (by time) are drawn again. The compositor reads the file when told
   (`DeskNotice.icons_changed`) and never decodes an image format: icon
   files come from packages Kuroko does not control.
-- **PNG** is decoded by txdesk itself (every color type and depth, palettes
+- **PNG** is decoded by krkdesk itself (every color type and depth, palettes
   with transparency; interlaced files are skipped). **SVG** goes through
   `rsvg-convert` (librsvg, installed by `setup.sh`). Scaling averages areas
   when shrinking and is bilinear when growing, on premultiplied colors.
@@ -200,7 +200,7 @@ touches. Change the code and this file together.
 - **Points and cantillation** (U+0591–U+05C7 marks) are kept as empty,
   zero-width glyphs: placing them over their letter needs shaping, which
   the atlases do not have. Text with niqqud shows its letters only.
-- **Direction:** `sdk/txwidgets/src/bidi.zig` reorders each drawn line from
+- **Direction:** `sdk/krkwidgets/src/bidi.zig` reorders each drawn line from
   logical to visual order: a subset of UAX #9 (paragraph direction from the
   first strong letter, digits and neutrals resolved by their neighbors,
   runs reversed, brackets mirrored). No explicit embeddings or isolates.
@@ -230,7 +230,7 @@ touches. Change the code and this file together.
 ## Ubuntu ARM VM
 
 - `tools/ubuntu/build.sh` (or `make ubuntu` from the root `Makefile`) cross-compiles for `aarch64-linux-gnu`. The simulator links
-  against a stub libSDL3 (`de/txsim/src/sdl_stub.zig`, soname
+  against a stub libSDL3 (`de/krksdl/src/sdl_stub.zig`, soname
   `libSDL3.so.0`) because the Mac has no SDL3 for the target; a test keeps
   the stub in step with `sdl.zig`. At run time the VM's real libSDL3 is
   loaded.
@@ -247,13 +247,13 @@ touches. Change the code and this file together.
   is `opengles2` (then `software`). The full-screen window takes the
   display's exact size. Kuroko's own Linux backend replaces all this.
 
-## App registry (txdesk)
+## App registry (krkdesk)
 
-- txdesk keeps `~/.local/state/kuroko/apps.krkde` (Kuroko
-  records `0x05xx`; `sdk/txcore/src/types.zig`): the apps, every file the
+- krkdesk keeps `~/.local/state/kuroko/apps.krkde` (Kuroko
+  records `0x05xx`; `sdk/krkcore/src/types.zig`): the apps, every file the
   scanner has looked at with its size, mtime and inode, and the search
-  paths. txdesk is the only writer; a temporary file is renamed over the
-  old one. Code in `de/txdesk/src/apps/`.
+  paths. krkdesk is the only writer; a temporary file is renamed over the
+  old one. Code in `de/krkdesk/src/apps/`.
 - Order: known apps are `stat`ed (gone: ghost; changed: version read
   again); the search paths are walked, skipping known files, inspecting new
   ones; then desktop entries not seen before name and describe the apps.
@@ -278,12 +278,12 @@ touches. Change the code and this file together.
   `/bin/x` and `/usr/bin/x` both tried); snap and Flatpak by path. snap and
   flatpak themselves are not app keys: their apps are keyed by the path
   that names them (`/snap/bin/chromium`).
-- The running txdesk loads `apps.krkde`, sends the compositor a snapshot
+- The running krkdesk loads `apps.krkde`, sends the compositor a snapshot
   when it connects (types `0x0301` DeskApp), scans at start and then every
   5 minutes, checks apt updates (`apt-cache policy`, no root, no network)
   at start and every 6 hours, saves when something changed, then sends the
   changed apps and a `saved` marker with the save count. The compositor
-  keeps a read-only copy (`de/txcomp/src/apps.zig`); a skipped count makes it
+  keeps a read-only copy (`de/krkcomp/src/apps.zig`); a skipped count makes it
   ask for a snapshot (`0x0202` DeskRequest). Entries are never removed from
   the copy, only hidden, so launcher indices stay valid.
 - The launcher shows the installed apps after the built-in ones, with
@@ -293,7 +293,7 @@ touches. Change the code and this file together.
   arrow in a circle on the icon. Running the upgrade waits for a password
   prompt (polkit).
 - Starting an installed app: the compositor runs its command with
-  `posix_spawnp` (`sdk/txcore/src/proc.zig`), field codes dropped, never
+  `posix_spawnp` (`sdk/krkcore/src/proc.zig`), field codes dropped, never
   waiting; SIGCHLD is ignored so children are reaped. Its window opens in
   Kuroko (see "Wayland server").
 - `run.sh` sets `XDG_SESSION_TYPE=wayland`: Chrome and Electron choose
@@ -302,7 +302,7 @@ touches. Change the code and this file together.
   `com.google.Chrome.desktop`, `NoDisplay=true`) are not read yet; the
   compositor will need them to match a window's Wayland app id.
 
-## Wayland server (txwl)
+## Wayland server (krkwl)
 
 - Pure Zig on libc sockets (no libwayland): the wire format, fds over
   SCM_RIGHTS, the peer's pid (SO_PEERCRED; its binary from
@@ -323,8 +323,8 @@ touches. Change the code and this file together.
   outside a grabbing popup closes the popups. Keyboard focus stays on the
   window surface (not on grabbing popups).
 - Keymap: the standard US layout by name (includes resolved by the app's
-  libxkbcommon from xkb-data). Keys travel as evdev codes; txsim maps SDL
-  scancodes (`de/txsim/src/keycodes.zig`). Modifiers come from the
+  libxkbcommon from xkb-data). Keys travel as evdev codes; krksdl maps SDL
+  scancodes (`de/krksdl/src/keycodes.zig`). Modifiers come from the
   input event (Shift, Ctrl, Alt, Super); Caps Lock is not tracked.
 - Windows: a new toplevel is adopted by the compositor on its first
   commit, matched to the registry by the client's binary, then by app id;
@@ -335,16 +335,16 @@ touches. Change the code and this file together.
 - Socket `$XDG_RUNTIME_DIR/wayland-kuroko-N` with a lock file per name;
   apps Kuroko starts get WAYLAND_DISPLAY, XDG_SESSION_TYPE=wayland and no
   DISPLAY. Kuroko's sockets and received fds are close-on-exec.
-- txsim polls the server: with apps connected the loop wakes every 4 ms.
+- krksdl polls the server: with apps connected the loop wakes every 4 ms.
   No ping/pong yet (a stuck app is not detected), and a client that
   shrinks its shared-memory file after creating a pool could fault the
   compositor (no SIGBUS guard yet).
 
 ## Known limits
 
-- Desktop dialogs are opened by the backend (`Compositor.desktop_dialogs`); in the simulator, `openDesktopDialog` in `de/txsim/src/main.zig` stands in for txdesk. The language dialog gets a copy of the languages and a callback that applies Done straight to `menus.System`; on Linux that is a message to txdesk, which tells the compositor.
+- Desktop dialogs are opened by the backend (`Compositor.desktop_dialogs`); in the simulator, `openDesktopDialog` in `de/krksdl/src/main.zig` stands in for krkdesk. The language dialog gets a copy of the languages and a callback that applies Done straight to `menus.System`; on Linux that is a message to krkdesk, which tells the compositor.
 - Labels do not wrap yet, so dialog notes are kept short.
-- The top-bar menus act on `menus.System` in the compositor only: no desktop service reports connections, sound, devices or layouts yet, and no command goes out. The simulator fills it with samples (`sampleSystem` in `de/txsim/src/main.zig`); without them the lists are empty and the layout is "EN".
+- The top-bar menus act on `menus.System` in the compositor only: no desktop service reports connections, sound, devices or layouts yet, and no command goes out. The simulator fills it with samples (`sampleSystem` in `de/krksdl/src/main.zig`); without them the lists are empty and the layout is "EN".
 - The simulator window is shrunk to fit the screen's usable area unless `--size` is given; scripted runs keep 1440 x 900.
 
 - Rows of widgets do not wrap, so a fixed-content window dragged narrower than its content is cut on the right.
@@ -358,5 +358,5 @@ touches. Change the code and this file together.
 - Menus in the title bar are labels only; dropdowns are not built.
 - Scaled-down unfocused windows (multi-level scaling) are not done; windows
   that do not fit are resized.
-- The compositor's own socket (txdesk and other services) has no
+- The compositor's own socket (krkdesk and other services) has no
   peer-credential check yet (Tessel Store); Wayland clients do.

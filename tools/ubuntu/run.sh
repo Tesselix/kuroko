@@ -1,20 +1,20 @@
 #!/bin/sh
 # Runs Kuroko full screen on the VM's own screen: the compositor with the
-# desktop and the apps (txsim, the simulator), and the desktop service
-# (txdesk) in the background.
+# desktop and the apps (krksdl, the simulator), and the desktop service
+# (krkdesk) in the background.
 #
 #   sh run.sh                 normal start (from the VM's console)
-#   sh run.sh --dark          any txsim options pass through (--panel, --tiled, --script NAME)
-#   TX_DEBUG=1 sh run.sh      SDL3 logs every step (video, render, input)
-#   TX_DISPLAY=kms sh run.sh  SDL3 straight on KMS/DRM, without cage (see below)
-#   TX_MODE=1920x1200 sh run.sh   screen size, default 2560x1440 (the Mac
+#   sh run.sh --dark          any krksdl options pass through (--panel, --tiled, --script NAME)
+#   KRK_DEBUG=1 sh run.sh      SDL3 logs every step (video, render, input)
+#   KRK_DISPLAY=kms sh run.sh  SDL3 straight on KMS/DRM, without cage (see below)
+#   KRK_MODE=1920x1200 sh run.sh   screen size, default 2560x1440 (the Mac
 #                             screen UTM shows it on: one VM pixel per
 #                             screen pixel, so text is sharp). A size not among
 #                             /sys/class/drm/card0-Virtual-1/modes is set as
 #                             a custom mode;
-#                             TX_MODE= (empty) keeps the VM's own 1280x800
+#                             KRK_MODE= (empty) keeps the VM's own 1280x800
 #
-# How it reaches the screen: txsim runs inside cage, a minimal Wayland
+# How it reaches the screen: krksdl runs inside cage, a minimal Wayland
 # kiosk (wlroots) that shows one app full screen. SDL3's own KMS/DRM driver
 # cannot be used on UTM: it puts ARGB8888 frames on the screen, and the
 # virtio-gpu primary plane accepts only XRGB8888 (`kmscube -f AR24` fails
@@ -22,9 +22,9 @@
 # its own Linux backend.
 #
 # Run it from the VM's console (cage needs the console's seat).
-# Quit: from SSH,  pkill txsim   (prints the timing summary; cage exits with it).
-#       pkill -9 txsim if it ever hangs.
-# Logs: ~/.cache/kuroko/txsim.log (txsim and cage), txdesk.log.
+# Quit: from SSH,  pkill krksdl   (prints the timing summary; cage exits with it).
+#       pkill -9 krksdl if it ever hangs.
+# Logs: ~/.cache/kuroko/krksdl.log (krksdl and cage), krkdesk.log.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 cache="$HOME/.cache/kuroko"
@@ -32,14 +32,14 @@ cache="$HOME/.cache/kuroko"
 # Run from a local copy: shared folders may drop the exec bit and are slow.
 bin="$cache/bin"
 mkdir -p "$bin"
-install -m 755 "$here/bin/txsim" "$here/bin/txdesk" "$bin/"
+install -m 755 "$here/bin/krksdl" "$here/bin/krkdesk" "$bin/"
 
 if ! ldconfig -p | grep -q 'libSDL3.so.0'; then
     echo "libSDL3 is missing: run  sh $here/setup.sh  first." >&2
     exit 1
 fi
 
-display=${TX_DISPLAY:-cage}
+display=${KRK_DISPLAY:-cage}
 case "$display" in
     cage)
         if ! command -v cage >/dev/null; then
@@ -48,16 +48,16 @@ case "$display" in
         fi
         # Screen size inside cage; unset means the default, empty means
         # leave the VM's preferred mode (1280x800).
-        TX_MODE="${TX_MODE-2560x1440}"
-        if [ -n "$TX_MODE" ] && ! command -v wlr-randr >/dev/null; then
+        KRK_MODE="${KRK_MODE-2560x1440}"
+        if [ -n "$KRK_MODE" ] && ! command -v wlr-randr >/dev/null; then
             echo "wlr-randr is missing, so the screen stays at the VM's size: sudo apt install wlr-randr" >&2
-            TX_MODE=""
+            KRK_MODE=""
         fi
         export SDL_VIDEODRIVER=wayland
         # wlroots draws with OpenGL ES (virgl). Its Vulkan renderer finds only
         # llvmpipe (CPU) in this VM and fails, so ignore a WLR_RENDERER=vulkan
-        # from the environment unless TX_WLR_RENDERER says otherwise.
-        export WLR_RENDERER="${TX_WLR_RENDERER:-gles2}"
+        # from the environment unless KRK_WLR_RENDERER says otherwise.
+        export WLR_RENDERER="${KRK_WLR_RENDERER:-gles2}"
         # Draw the pointer into the frame, not on the cursor plane: on virgl
         # the cursor-plane image comes out upside down while its hotspot
         # stays at the top, so clicks land above the visible tip.
@@ -71,7 +71,7 @@ case "$display" in
         export SDL_VIDEODRIVER=kmsdrm
         ;;
     *)
-        echo "TX_DISPLAY must be cage or kms, not $display" >&2
+        echo "KRK_DISPLAY must be cage or kms, not $display" >&2
         exit 1
         ;;
 esac
@@ -87,17 +87,17 @@ export XDG_SESSION_TYPE=wayland
 if [ -z "$XDG_RUNTIME_DIR" ] && [ -d "/run/user/$(id -u)" ]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 fi
-if [ -n "$TX_DEBUG" ]; then
+if [ -n "$KRK_DEBUG" ]; then
     export SDL_LOGGING='*=verbose'
 fi
 
-"$bin/txdesk" >"$cache/txdesk.log" 2>&1 &
+"$bin/krkdesk" >"$cache/krkdesk.log" 2>&1 &
 desk=$!
 trap 'kill $desk 2>/dev/null' EXIT INT TERM
 
-log="$cache/txsim.log"
+log="$cache/krksdl.log"
 {
-    echo "== $(date '+%F %T')  display=$display  mode=${TX_MODE:-default}  tty=$(tty)  ssh=${SSH_CONNECTION:+yes}  renderer=$SDL_RENDER_DRIVER  args: $*"
+    echo "== $(date '+%F %T')  display=$display  mode=${KRK_MODE:-default}  tty=$(tty)  ssh=${SSH_CONNECTION:+yes}  renderer=$SDL_RENDER_DRIVER  args: $*"
     echo "   SDL3: $(readlink -f "$(ldconfig -p | grep -m1 'libSDL3.so.0 ' | sed 's/.*=> //')")"
 } >"$log"
 if [ -n "$SSH_CONNECTION" ] && [ "$display" = cage ]; then
@@ -105,25 +105,25 @@ if [ -n "$SSH_CONNECTION" ] && [ "$display" = cage ]; then
 fi
 status=0
 if [ "$display" = cage ]; then
-    # Inside cage: set the screen size first (wlr-randr), then start txsim.
-    export TX_MODE
+    # Inside cage: set the screen size first (wlr-randr), then start krksdl.
+    export KRK_MODE
     cage -- sh -c '
-        if [ -n "$TX_MODE" ]; then
+        if [ -n "$KRK_MODE" ]; then
             out=$(wlr-randr | head -n1 | cut -d" " -f1)
             # A listed mode first; else a custom one (virtio-gpu lists only
             # a few, often not the host screen size, such as 2560x1440).
-            if wlr-randr --output "$out" --mode "$TX_MODE" 2>/dev/null; then
-                echo "screen: $out at $TX_MODE"
-            elif wlr-randr --output "$out" --custom-mode "$TX_MODE"; then
-                echo "screen: $out at $TX_MODE (custom mode)"
+            if wlr-randr --output "$out" --mode "$KRK_MODE" 2>/dev/null; then
+                echo "screen: $out at $KRK_MODE"
+            elif wlr-randr --output "$out" --custom-mode "$KRK_MODE"; then
+                echo "screen: $out at $KRK_MODE (custom mode)"
             else
-                echo "screen: could not set $TX_MODE on $out (see the modes in /sys/class/drm/card0-*/modes)"
+                echo "screen: could not set $KRK_MODE on $out (see the modes in /sys/class/drm/card0-*/modes)"
             fi
         fi
-        exec "$0" --fullscreen "$@"' "$bin/txsim" "$@" >>"$log" 2>&1 || status=$?
+        exec "$0" --fullscreen "$@"' "$bin/krksdl" "$@" >>"$log" 2>&1 || status=$?
 else
-    "$bin/txsim" --fullscreen "$@" >>"$log" 2>&1 || status=$?
+    "$bin/krksdl" --fullscreen "$@" >>"$log" 2>&1 || status=$?
 fi
-echo "== txsim exited with status $status" >>"$log"
+echo "== krksdl exited with status $status" >>"$log"
 grep -v '^00:00:' "$log" | tail -n 40
 exit $status

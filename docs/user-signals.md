@@ -106,7 +106,7 @@ Reading patterns and video watching need more than the compositor sees:
 
 ### 4. Clipboard events
 
-The compositor owns the clipboard (txwl's data device, today accepted and ignored). It records:
+The compositor owns the clipboard (krkwl's data device, today accepted and ignored). It records:
 
 - **Copy:** source app, its signature, the source window and the object open in it, the combined trust level, time, the offered types (MIME), size, and whether the source marked it secret (password managers use a hint type for this).
 - **Paste:** target app, its signature, the target window and the object open in it, the combined trust level, time, the type asked for, and whether it was allowed.
@@ -138,9 +138,9 @@ The interaction facts and the debugging trace come from the same places in the c
 
 ## What this means for the code now
 
-- Done (2026-10-27): Focus and Recent in the launcher, decided by txdesk from recorded uses (see `docs/implementation-notes.md`, "Focus and Recent"); the top bar's Learning switch pauses the recording.
+- Done (2026-10-27): Focus and Recent in the launcher, decided by krkdesk from recorded uses (see `docs/implementation-notes.md`, "Focus and Recent"); the top bar's Learning switch pauses the recording.
 - Done (2026-10-27): every client is tied to its PID and binary at connect time; the user can mark apps, files and folders trusted or untrusted; the compositor decides each window's trust and publishes it. Details: `docs/implementation-notes.md`, "Identity and trust". Still to do here: the pidfd (a PID can be reused), and re-checking the binary when the process `exec`s.
-- txwl: a real data device (copy and paste), with the compositor able to be the source, and every copy and paste recorded with source and target.
+- krkwl: a real data device (copy and paste), with the compositor able to be the source, and every copy and paste recorded with source and target.
 - The layer list: a per-layer "content mode" (as is, blurred, replaced) and one switch that covers every place a window's pixels are drawn.
 - The event publisher: per-window interaction summaries (visibility, keyboard focus, pointer, input kinds, idle) and session events, next to the scene-graph deltas.
 - The Kuroko protocol: Kuroko apps report the object they show and the part in view.

@@ -20,7 +20,7 @@ whenever the pin moves.
 
 - Everything that touches the OS goes through `std.Io` and takes `io`:
   files (`std.Io.Dir`, `std.Io.File`), clocks, sleeping, networking.
-- Pure code (txcore format, registry, layout, widgets) does not need `io`.
+- Pure code (krkcore format, registry, layout, widgets) does not need `io`.
   Keep it that way: pass time in as `now: i64` nanoseconds.
 - Tests: `std.testing.allocator` (reports leaks).
 
@@ -62,7 +62,7 @@ try fw.interface.flush();
 - `std.posix` lost `socket/accept/read/write/close/getenv`. `std.Io.net` has
   Unix sockets (`std.Io.net.UnixAddress`), but its calls block the task.
 - The compositor needs non-blocking sockets in its own loop, so
-  `sdk/txcore/src/ipc.zig` calls libc directly (`std.c.socket`, `accept`,
+  `sdk/krkcore/src/ipc.zig` calls libc directly (`std.c.socket`, `accept`,
   `write`, ... with `std.c.errno`). Modules using it link libc.
 - `std.posix.sigaction` and `std.posix.sigemptyset` still exist.
 
@@ -98,7 +98,7 @@ try fw.interface.flush();
 - Avoid `@cImport` (deprecated in 0.16, removed in 0.17; in 0.16 it fails on
   macOS ARM headers such as `arm_neon.h`). Declare the few C functions needed
   with `extern "c"` and check struct layouts with comptime asserts, as in
-  `de/txsim/src/sdl.zig`.
+  `de/krksdl/src/sdl.zig`.
 - `build.zig.zon` needs `.name = .enum_literal` and a `.fingerprint`.
 
 ## Moving to 0.17
@@ -106,7 +106,7 @@ try fw.interface.flush();
 Known work, from the 0.17 release (October 2026):
 
 - `@cImport` is removed (deprecated in 0.16). Kuroko does not use it: the
-  simulator declares SDL3 by hand and txgl declares GL by hand. The Linux
+  simulator declares SDL3 by hand and krkgl declares GL by hand. The Linux
   backend should do the same for libdrm, GBM, EGL, libinput and libseat.
 - The build system splits configuration and execution into separate
   processes; check custom build steps.

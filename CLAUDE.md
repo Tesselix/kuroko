@@ -28,13 +28,13 @@ Read this first, then the design documents in `docs/` for the part you touch.
 
 ## Rules (from the Widget Framework, "Rules for AI code generation")
 
-1. Store handles (`txcore.Handle`), use guards with `defer`; never keep a raw
+1. Store handles (`krkcore.Handle`), use guards with `defer`; never keep a raw
    pointer past the current event. `endEvent()` checks this.
 2. The compositor never waits on another process. Writes are non-blocking;
    client death is detected from the socket closing.
 3. Every structure that crosses a process or reaches disk is a Kuroko record
-   (`txcore.format`), with fixed-width fields, little-endian, extern structs.
-   Register type IDs in `sdk/txcore/src/types.zig`. Files of Kuroko records
+   (`krkcore.format`), with fixed-width fields, little-endian, extern structs.
+   Register type IDs in `sdk/krkcore/src/types.zig`. Files of Kuroko records
    use the extension `.krkde` (for example `apps.krkde`).
 4. Theme roles only, never hard-coded colors. No state by color alone: add a
    shape cue. Nothing flashes more than 3 times per second.
@@ -52,6 +52,6 @@ behaviors get a place in `sdk/gallery`.
 
 ## The simulator
 
-`de/txsim` is a thin SDL3 backend for macOS. Everything it does must be
+`de/krksdl` is a thin SDL3 backend for macOS. Everything it does must be
 expressible over the real protocols (Wayland plus the Kuroko protocol);
-`sdk/txwidgets/src/surface.zig` is that contract.
+`sdk/krkwidgets/src/surface.zig` is that contract.

@@ -25,13 +25,13 @@ Notation follows the Top-Level Design: **(agreed)**, **(suggestion)**, **[compos
 
 ### The record (suggestion)
 
-A trace event is a Kuroko record (`txcore.format`) with a fixed-width payload header, followed by kind-specific fields:
+A trace event is a Kuroko record (`krkcore.format`) with a fixed-width payload header, followed by kind-specific fields:
 
 | Field | Size | What it is |
 | --- | --- | --- |
 | time | 8 | Monotonic nanoseconds, system-wide clock (Linux `CLOCK_MONOTONIC`), the same in every process, so streams from different processes merge by time. Not "since start". |
 | seq | 8 | Per-source sequence number. A gap means events were dropped. |
-| source | 4 | Which process and component wrote it (compositor input path, renderer, txwl, txdesk, an app, ...). |
+| source | 4 | Which process and component wrote it (compositor input path, renderer, krkwl, krkdesk, an app, ...). |
 | category | 2 | Bit or small number, for filtering at the source (see Levels). |
 | kind | 2 | The event type inside the category. |
 | frame | 8 | The compositor frame this event belongs to (0 outside the compositor). |
@@ -41,7 +41,7 @@ A trace event is a Kuroko record (`txcore.format`) with a fixed-width payload he
 
 Kind-specific fields follow, fixed-width. Variable data (a title, a protocol message's arguments) comes as trailing bytes with a length, as in `SceneWindow`.
 
-- Trace types get their own range in `sdk/txcore/src/types.zig` (suggestion: `0x07xx`; `0x06xx` holds the trust marks).
+- Trace types get their own range in `sdk/krkcore/src/types.zig` (suggestion: `0x07xx`; `0x06xx` holds the trust marks).
 - Text that already has an ID is not repeated: a window's title is sent once in a "named" event, and later events carry only the window's ID.
 
 ### Spans
@@ -53,13 +53,13 @@ An operation that takes time (a frame, a layout pass, an animation, an app's con
 The cause field links events into chains across components and processes:
 
 - An input event gets an ID when it enters the compositor. Everything it triggers (focus, hit test, layout, a message to an app) carries that ID or a span under it.
-- Messages that cross a process boundary carry the cause along: the compositor's configure to an app has an ID, and txwl records the app's matching commit with that ID as cause. For apps that use Kuroko's widget library, the Kuroko protocol carries the cause explicitly; for other Wayland apps, txwl infers it from the protocol (configure serial and `ack_configure`).
+- Messages that cross a process boundary carry the cause along: the compositor's configure to an app has an ID, and krkwl records the app's matching commit with that ID as cause. For apps that use Kuroko's widget library, the Kuroko protocol carries the cause explicitly; for other Wayland apps, krkwl infers it from the protocol (configure serial and `ack_configure`).
 - A frame lists the commits and changes it shows, so "this key press became visible in frame N, 31 ms later" is a query, not a guess.
 
 ## Identity
 
-- **Handles everywhere.** Compositor objects are already `txcore.Handle` (index plus generation, usable as a 64-bit ID, never reused while the generation differs). Every object that events mention gets one: outputs, windows, Wayland clients, surfaces, buffers, layers, input devices, animations, desktop-service connections.
-- **IDs are unique across sources.** The source is part of the identity, so an ID from txdesk and one from the compositor cannot collide.
+- **Handles everywhere.** Compositor objects are already `krkcore.Handle` (index plus generation, usable as a 64-bit ID, never reused while the generation differs). Every object that events mention gets one: outputs, windows, Wayland clients, surfaces, buffers, layers, input devices, animations, desktop-service connections.
+- **IDs are unique across sources.** The source is part of the identity, so an ID from krkdesk and one from the compositor cannot collide.
 - **Lifecycle events.** Each object has created, named (and renamed), properties changed and destroyed events. A viewer can then show any object's whole life, and a dangling ID is visible as an event that mentions an object after its destroy.
 - **Apps are tied to processes.** A Wayland client is recorded with its process ID and executable (from the socket's peer credentials), so a window links to its process, and later to its CPU and memory use.
 
@@ -74,7 +74,7 @@ Every compositor frame records (suggestion):
 - which client commits were shown in it, and which were still waiting
 - whether the frame missed its deadline, and by how much
 
-The existing histograms (`txcore.metrics`) stay as cheap summaries. Frame records are what explain a single bad frame.
+The existing histograms (`krkcore.metrics`) stay as cheap summaries. Frame records are what explain a single bad frame.
 
 ## Layers
 
@@ -128,7 +128,7 @@ The core already takes time as a parameter (`now`) instead of reading a clock. T
 ## Apps
 
 - Apps built on Kuroko's widget library write to their own ring, in the same format, with the same clock: widget events, layout, their own frame stages. Their streams merge with the compositor's by time and cause.
-- Other Wayland apps are seen from outside: txwl's protocol trace, their commits and the frames that showed them.
+- Other Wayland apps are seen from outside: krkwl's protocol trace, their commits and the frames that showed them.
 
 ## Privacy
 
@@ -142,10 +142,10 @@ Traces can hold what the user types and reads.
 
 Things to build in while the code is small, before the debugger exists:
 
-- A trace module in `txcore`: the record, the ring, the categories, the "dropped N" rule, with tests.
+- A trace module in `krkcore`: the record, the ring, the categories, the "dropped N" rule, with tests.
 - A system-wide monotonic clock for all trace times (the simulator's clock is "since start" today).
 - IDs for the objects that do not have one yet: Wayland clients, surfaces, buffers, layers, input events.
-- Configure-to-commit cause tracking in txwl.
+- Configure-to-commit cause tracking in krkwl.
 - The layer list (GPU design) with IDs, names, owners and a hit test from the start.
 - Determinism checks in the core's tests: the same inputs give the same layer lists.
 

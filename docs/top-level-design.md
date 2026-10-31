@@ -165,8 +165,8 @@ Repairs are logged with their source (socket peer, or file and offset) and count
 
 Kuroko needs full control of every part of the window system, so that an advanced window manager, the debugger (`docs/debugging.md`) and the trust and sensitivity features (`docs/user-signals.md`) can be built without working around someone else's object model.
 
-- **Own Wayland server:** `txwl`, pure Zig, no libwayland.
-- **Own GPU renderer:** `txgl`, OpenGL ES 3.0 (OpenGL 3.3 core on the Mac). The compositor core records a draw list; the renderer turns it into quads.
+- **Own Wayland server:** `krkwl`, pure Zig, no libwayland.
+- **Own GPU renderer:** `krkgl`, OpenGL ES 3.0 (OpenGL 3.3 core on the Mac). The compositor core records a draw list; the renderer turns it into quads.
 - **Own Linux backend, on the system libraries** that every compositor uses: libdrm (KMS), GBM, EGL, libinput, libxkbcommon, libseat. No wlroots.
 - **What this costs:** the hardware edge cases wlroots solves (atomic modesetting, buffer formats and modifiers, multiple GPUs, hotplug, explicit sync) are ours to solve. They are built step by step, behind a thin backend interface, and tested on the VM and on bare metal.
 
