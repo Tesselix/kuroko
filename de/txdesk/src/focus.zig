@@ -5,7 +5,7 @@
 //! The recorder turns the compositor's scene into facts: one use per window
 //! (an episode) with when it opened and closed and how long it had keyboard
 //! focus (facts.krkde). The predictor reads the facts and writes the
-//! launcher's lists (focus.krkde, txcore/src/influence.zig):
+//! launcher's lists (focus.krkde, sdk/txcore/src/influence.zig):
 //!
 //!   Focus first, at most 4:
 //!     - cycles that are due: an app opened in the first hour of the day on

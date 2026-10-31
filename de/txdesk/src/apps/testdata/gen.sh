@@ -3,7 +3,7 @@
 # stub display libraries (same sonames, no code) and call or carry what the
 # inspector looks for. Run from anywhere; needs only zig.
 #
-#   sh txdesk/src/apps/testdata/gen.sh
+#   sh de/txdesk/src/apps/testdata/gen.sh
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)

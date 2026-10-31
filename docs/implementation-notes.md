@@ -8,41 +8,41 @@ touches. Change the code and this file together.
 
 | Question (document) | What the code does now | Where |
 | --- | --- | --- |
-| Type ID registry: one space or split (Top-Level) | High byte names the component: `0x01` assets, `0x02` compositor → services, `0x03` services → compositor, `0x04` widget protocol, `0x7F` tests | `txcore/src/types.zig` |
-| Which row a new window goes to (Top-Level) | By order: windows 1–2 in row 0, 3–4 in row 1 | `txcomp/src/tiling.zig` |
-| Window fill of its tile | 99% (the user, 2026-10-28; was 95%); `tiling.Params.fill` | `txcomp/src/tiling.zig` |
-| Growable windows | A window with a document view; the rest have fixed content | `txwidgets/src/window.zig` |
-| Optimal size of a framework window | Measured from the widget tree unless the app gives a size | `txwidgets/src/window.zig` |
-| Opening a 5th window (Top-Level, suggestion) | The least recently focused window goes to the shelf | `txcomp/src/compositor.zig` |
-| Notch rates between bands (Look and Controls) | Fast from 7 notches/s, very fast from 16 notches/s, bursts up to 1.2 s; parameters in `txcore.wheel.Params` | `txcore/src/wheel.zig` |
-| Map: pages and where sliding starts (Look and Controls) | 5 pages, sliding from the middle | `txwidgets/src/scroll.zig` |
-| Magnifier size (Look and Controls) | 6 lines, up to 520 px or two thirds of the content width | `txwidgets/src/doc_view.zig` |
-| Key for "back after a jump" (Look and Controls) | Alt+← (Option+← on a Mac); 16 positions kept | `txwidgets/src/doc_view.zig` |
-| Center marker visibility (Look and Controls) | While scrolling and while the map is open; fades over 0.4 s after 1 s at rest | `txwidgets/src/doc_view.zig` |
-| Exact theme colors (Look and Controls) | First values in `txcore/src/theme.zig`, light and dark | |
-| Text stack and 2D rendering (Widget Framework) | Stopgap: own CPU rasterizer and pre-rendered Inter atlases; no shaping, no bidi, no Hebrew yet. The compositor's frame goes to the GPU as a draw list (see "GPU rendering") | `txwidgets/src/canvas.zig`, `font.zig`, `draw_list.zig` |
-| Top-bar menu icons (Top-Level) | 32 px buttons side by side with no gap, 2 px from the right edge, so the row is one target; the date and time sit right-aligned in a fixed 124 px slot in the corner, so the icons do not move as it changes; the learning indicator sits 8 px left of the language icon. The simulator formats the date as "Fri Oct 30  13:35" (24-hour, English) until locale formatting exists | `txcomp/src/shell.zig` |
-| Top-bar menus (Top-Level) | Under the bar at the right, 8 px from the edge; control center 320 px wide, device center 380, the others 300. Details (a connection's, a device's) replace the menu's content in the same panel, as on macOS, not a separate dialog. Wi-Fi joins a network with one click; the password prompt comes with the backend. A user action changes `menus.System` at once; the desktop service will confirm or correct it, and the compositor never waits for it | `txcomp/src/menus.zig` |
-| Dialogs (Top-Level, "Dialogs") | Kept outside the window registry, in their own list (`dialogs.zig`); the content gets a 6 px frame with 14 px corners, so its square corners stay inside. Dimming for a modal one is the theme's shadow color at alpha 90, over the parent's frame or the whole screen. A window asks for a dialog through `Surface.take_dialog` (Wayland: a new toplevel with a parent), picked up once per frame. A second request from the same desktop dialog name raises the open one instead of opening another | `txcomp/src/dialogs.zig`, `txcomp/src/compositor.zig` |
-| Mobile-first widgets (Widget Framework) | Rows are 44 px, 54 with a subtitle; a grouped list's card takes the other of `surface` and `surface_alt` from the window's background; a header bar centers its title on the whole bar; a scroll area scrolls by 44 px lines with the document view's wheel physics. A top-level column now takes the window's height, so a scroll area in it gets the room left | `txwidgets/src/window.zig` |
-| Panel icon size (Top-Level) | 52 px icons, 14 px apart, centered in the 76 px panel; a status line runs under the icon | `txcomp/src/compositor.zig` |
-| Quick drag out of the panel (Top-Level) | Released within 0.3 s of the press; `quick_drag_ms` | `txcomp/src/compositor.zig` |
-| Reorder preview (Top-Level, Swapping) | The pointer rests 0.12 s on a tile before its window moves aside (`reorder_dwell_ms`); a drop before that still swaps. The target is found in the tiles as they were when the drag began, so a swap that moves the borders cannot flip it back and forth | `txcomp/src/compositor.zig` |
-| Where a restored window goes after maximize (Top-Level) | The old tile order; the maximized window keeps its place, or goes last if it came from the panel | `txcomp/src/compositor.zig` |
-| How app and object trust combine (User Signals) | An unknown object leaves the app's level; otherwise the lower of the two | `txcore/src/trust.zig` |
-| Which apps are trusted (User Signals) | Kuroko's own apps always; an installed app (in the registry) unless the user marks it; any other app only when marked | `txcore/src/trust.zig`, `txcomp/src/compositor.zig` |
-| A mark on a folder (User Signals) | Covers every file under it; the nearest marked folder wins, and a file's own mark wins over any folder | `txcore/src/trust.zig` |
-| Who decides Focus and Recent (User Signals, Top-Level "Influence files") | txdesk: its recorder writes the facts (`facts.krkde`), its simple predictor the lists (`focus.krkde`); the compositor only reads them | `txdesk/src/focus.zig` |
-| What earns Focus, for now | Keyboard-focus time, halving every 3 days, at least 2 minutes' worth; or a cycle that is due (opened in the first hour of the day on ≥ 3 days and on more than half of the last 14 days with use), during today's first hour | `txdesk/src/focus.zig` |
-| Footprints (Look and Controls) | A section counts as read after 3 s at the middle of the view while not scrolling; in memory only | `txwidgets/src/doc_view.zig` |
+| Type ID registry: one space or split (Top-Level) | High byte names the component: `0x01` assets, `0x02` compositor → services, `0x03` services → compositor, `0x04` widget protocol, `0x7F` tests | `sdk/txcore/src/types.zig` |
+| Which row a new window goes to (Top-Level) | By order: windows 1–2 in row 0, 3–4 in row 1 | `de/txcomp/src/tiling.zig` |
+| Window fill of its tile | 99% (the user, 2026-10-28; was 95%); `tiling.Params.fill` | `de/txcomp/src/tiling.zig` |
+| Growable windows | A window with a document view; the rest have fixed content | `sdk/txwidgets/src/window.zig` |
+| Optimal size of a framework window | Measured from the widget tree unless the app gives a size | `sdk/txwidgets/src/window.zig` |
+| Opening a 5th window (Top-Level, suggestion) | The least recently focused window goes to the shelf | `de/txcomp/src/compositor.zig` |
+| Notch rates between bands (Look and Controls) | Fast from 7 notches/s, very fast from 16 notches/s, bursts up to 1.2 s; parameters in `txcore.wheel.Params` | `sdk/txcore/src/wheel.zig` |
+| Map: pages and where sliding starts (Look and Controls) | 5 pages, sliding from the middle | `sdk/txwidgets/src/scroll.zig` |
+| Magnifier size (Look and Controls) | 6 lines, up to 520 px or two thirds of the content width | `sdk/txwidgets/src/doc_view.zig` |
+| Key for "back after a jump" (Look and Controls) | Alt+← (Option+← on a Mac); 16 positions kept | `sdk/txwidgets/src/doc_view.zig` |
+| Center marker visibility (Look and Controls) | While scrolling and while the map is open; fades over 0.4 s after 1 s at rest | `sdk/txwidgets/src/doc_view.zig` |
+| Exact theme colors (Look and Controls) | First values in `sdk/txcore/src/theme.zig`, light and dark | |
+| Text stack and 2D rendering (Widget Framework) | Stopgap: own CPU rasterizer and pre-rendered Inter atlases; no shaping, no bidi, no Hebrew yet. The compositor's frame goes to the GPU as a draw list (see "GPU rendering") | `sdk/txwidgets/src/canvas.zig`, `font.zig`, `draw_list.zig` |
+| Top-bar menu icons (Top-Level) | 32 px buttons side by side with no gap, 2 px from the right edge, so the row is one target; the date and time sit right-aligned in a fixed 124 px slot in the corner, so the icons do not move as it changes; the learning indicator sits 8 px left of the language icon. The simulator formats the date as "Fri Oct 30  13:35" (24-hour, English) until locale formatting exists | `de/txcomp/src/shell.zig` |
+| Top-bar menus (Top-Level) | Under the bar at the right, 8 px from the edge; control center 320 px wide, device center 380, the others 300. Details (a connection's, a device's) replace the menu's content in the same panel, as on macOS, not a separate dialog. Wi-Fi joins a network with one click; the password prompt comes with the backend. A user action changes `menus.System` at once; the desktop service will confirm or correct it, and the compositor never waits for it | `de/txcomp/src/menus.zig` |
+| Dialogs (Top-Level, "Dialogs") | Kept outside the window registry, in their own list (`dialogs.zig`); the content gets a 6 px frame with 14 px corners, so its square corners stay inside. Dimming for a modal one is the theme's shadow color at alpha 90, over the parent's frame or the whole screen. A window asks for a dialog through `Surface.take_dialog` (Wayland: a new toplevel with a parent), picked up once per frame. A second request from the same desktop dialog name raises the open one instead of opening another | `de/txcomp/src/dialogs.zig`, `de/txcomp/src/compositor.zig` |
+| Mobile-first widgets (Widget Framework) | Rows are 44 px, 54 with a subtitle; a grouped list's card takes the other of `surface` and `surface_alt` from the window's background; a header bar centers its title on the whole bar; a scroll area scrolls by 44 px lines with the document view's wheel physics. A top-level column now takes the window's height, so a scroll area in it gets the room left | `sdk/txwidgets/src/window.zig` |
+| Panel icon size (Top-Level) | 52 px icons, 14 px apart, centered in the 76 px panel; a status line runs under the icon | `de/txcomp/src/compositor.zig` |
+| Quick drag out of the panel (Top-Level) | Released within 0.3 s of the press; `quick_drag_ms` | `de/txcomp/src/compositor.zig` |
+| Reorder preview (Top-Level, Swapping) | The pointer rests 0.12 s on a tile before its window moves aside (`reorder_dwell_ms`); a drop before that still swaps. The target is found in the tiles as they were when the drag began, so a swap that moves the borders cannot flip it back and forth | `de/txcomp/src/compositor.zig` |
+| Where a restored window goes after maximize (Top-Level) | The old tile order; the maximized window keeps its place, or goes last if it came from the panel | `de/txcomp/src/compositor.zig` |
+| How app and object trust combine (User Signals) | An unknown object leaves the app's level; otherwise the lower of the two | `sdk/txcore/src/trust.zig` |
+| Which apps are trusted (User Signals) | Kuroko's own apps always; an installed app (in the registry) unless the user marks it; any other app only when marked | `sdk/txcore/src/trust.zig`, `de/txcomp/src/compositor.zig` |
+| A mark on a folder (User Signals) | Covers every file under it; the nearest marked folder wins, and a file's own mark wins over any folder | `sdk/txcore/src/trust.zig` |
+| Who decides Focus and Recent (User Signals, Top-Level "Influence files") | txdesk: its recorder writes the facts (`facts.krkde`), its simple predictor the lists (`focus.krkde`); the compositor only reads them | `de/txdesk/src/focus.zig` |
+| What earns Focus, for now | Keyboard-focus time, halving every 3 days, at least 2 minutes' worth; or a cycle that is due (opened in the first hour of the day on ≥ 3 days and on more than half of the last 14 days with use), during today's first hour | `de/txdesk/src/focus.zig` |
+| Footprints (Look and Controls) | A section counts as read after 3 s at the middle of the view while not scrolling; in memory only | `sdk/txwidgets/src/doc_view.zig` |
 
 ## Zig version
 
 - Zig 0.16.0, the latest solid version (rule in `docs/dependencies.md`).
   Notes on the APIs and the 0.17 move: `docs/zig-notes.md`.
-- The simulator uses SDL3, declared by hand in `tools/txsim/src/sdl.zig`
+- The simulator uses SDL3, declared by hand in `de/txsim/src/sdl.zig`
   (no `@cImport`).
-- Sockets use libc directly (`txcore/src/ipc.zig`) because `std.Io`'s
+- Sockets use libc directly (`sdk/txcore/src/ipc.zig`) because `std.Io`'s
   networking blocks the calling task and the compositor must never wait.
 
 ## Binary format details
@@ -76,7 +76,7 @@ touches. Change the code and this file together.
   with the same code, so it is pixel-identical to drawing directly (tested
   per primitive and for whole compositor frames, which also checks that the
   core is deterministic).
-- **Renderer** (`txgl/src/renderer.zig`): one shader; every primitive is a
+- **Renderer** (`de/txgl/src/renderer.zig`): one shader; every primitive is a
   quad. Shapes use the canvas's signed-distance formulas, glyphs one shared
   R8 texture packed on first use, images RGBA textures (swizzled from
   0xAARRGGBB in the shader). Clips are scissor rects; quads are batched
@@ -115,7 +115,7 @@ touches. Change the code and this file together.
   the compositor on connect (`DeskTrust` snapshot) and when they change.
   `txdesk trust ...` edits the file; a running txdesk notices (stat) and
   resends.
-- **One set of rules** (`txcore/src/trust.zig`), used by both txdesk and the
+- **One set of rules** (`sdk/txcore/src/trust.zig`), used by both txdesk and the
   compositor. The compositor decides; txdesk only stores.
 - **An installed app counts only by its own binary.** A client that claims
   an installed app's id (Wayland app id) with another binary gets no trust
@@ -194,13 +194,13 @@ touches. Change the code and this file together.
 
 - **Glyphs:** Inter has no Hebrew, so each UI atlas has a Hebrew fallback
   atlas of the same size and weight, rendered from Noto Sans Hebrew
-  (`fonts/hebrew-*.krkde`, `tools/fontgen/gen_fonts.py --hebrew`). A glyph is
+  (`fonts/hebrew-*.krkde`, `sdk/tools/fontgen/gen_fonts.py --hebrew`). A glyph is
   looked up in the UI atlas, then the fallback, else drawn as '?'. Other
   scripts (Arabic, CJK, emoji) still show '?'.
 - **Points and cantillation** (U+0591–U+05C7 marks) are kept as empty,
   zero-width glyphs: placing them over their letter needs shaping, which
   the atlases do not have. Text with niqqud shows its letters only.
-- **Direction:** `txwidgets/src/bidi.zig` reorders each drawn line from
+- **Direction:** `sdk/txwidgets/src/bidi.zig` reorders each drawn line from
   logical to visual order: a subset of UAX #9 (paragraph direction from the
   first strong letter, digits and neutrals resolved by their neighbors,
   runs reversed, brackets mirrored). No explicit embeddings or isolates.
@@ -230,7 +230,7 @@ touches. Change the code and this file together.
 ## Ubuntu ARM VM
 
 - `tools/ubuntu/build.sh` (or `make ubuntu` from the root `Makefile`) cross-compiles for `aarch64-linux-gnu`. The simulator links
-  against a stub libSDL3 (`tools/txsim/src/sdl_stub.zig`, soname
+  against a stub libSDL3 (`de/txsim/src/sdl_stub.zig`, soname
   `libSDL3.so.0`) because the Mac has no SDL3 for the target; a test keeps
   the stub in step with `sdl.zig`. At run time the VM's real libSDL3 is
   loaded.
@@ -250,10 +250,10 @@ touches. Change the code and this file together.
 ## App registry (txdesk)
 
 - txdesk keeps `~/.local/state/kuroko/apps.krkde` (Kuroko
-  records `0x05xx`; `txcore/src/types.zig`): the apps, every file the
+  records `0x05xx`; `sdk/txcore/src/types.zig`): the apps, every file the
   scanner has looked at with its size, mtime and inode, and the search
   paths. txdesk is the only writer; a temporary file is renamed over the
-  old one. Code in `txdesk/src/apps/`.
+  old one. Code in `de/txdesk/src/apps/`.
 - Order: known apps are `stat`ed (gone: ghost; changed: version read
   again); the search paths are walked, skipping known files, inspecting new
   ones; then desktop entries not seen before name and describe the apps.
@@ -283,7 +283,7 @@ touches. Change the code and this file together.
   5 minutes, checks apt updates (`apt-cache policy`, no root, no network)
   at start and every 6 hours, saves when something changed, then sends the
   changed apps and a `saved` marker with the save count. The compositor
-  keeps a read-only copy (`txcomp/src/apps.zig`); a skipped count makes it
+  keeps a read-only copy (`de/txcomp/src/apps.zig`); a skipped count makes it
   ask for a snapshot (`0x0202` DeskRequest). Entries are never removed from
   the copy, only hidden, so launcher indices stay valid.
 - The launcher shows the installed apps after the built-in ones, with
@@ -293,7 +293,7 @@ touches. Change the code and this file together.
   arrow in a circle on the icon. Running the upgrade waits for a password
   prompt (polkit).
 - Starting an installed app: the compositor runs its command with
-  `posix_spawnp` (`txcore/src/proc.zig`), field codes dropped, never
+  `posix_spawnp` (`sdk/txcore/src/proc.zig`), field codes dropped, never
   waiting; SIGCHLD is ignored so children are reaped. Its window opens in
   Kuroko (see "Wayland server").
 - `run.sh` sets `XDG_SESSION_TYPE=wayland`: Chrome and Electron choose
@@ -324,7 +324,7 @@ touches. Change the code and this file together.
   window surface (not on grabbing popups).
 - Keymap: the standard US layout by name (includes resolved by the app's
   libxkbcommon from xkb-data). Keys travel as evdev codes; txsim maps SDL
-  scancodes (`tools/txsim/src/keycodes.zig`). Modifiers come from the
+  scancodes (`de/txsim/src/keycodes.zig`). Modifiers come from the
   input event (Shift, Ctrl, Alt, Super); Caps Lock is not tracked.
 - Windows: a new toplevel is adopted by the compositor on its first
   commit, matched to the registry by the client's binary, then by app id;
@@ -342,9 +342,9 @@ touches. Change the code and this file together.
 
 ## Known limits
 
-- Desktop dialogs are opened by the backend (`Compositor.desktop_dialogs`); in the simulator, `openDesktopDialog` in `tools/txsim/src/main.zig` stands in for txdesk. The language dialog gets a copy of the languages and a callback that applies Done straight to `menus.System`; on Linux that is a message to txdesk, which tells the compositor.
+- Desktop dialogs are opened by the backend (`Compositor.desktop_dialogs`); in the simulator, `openDesktopDialog` in `de/txsim/src/main.zig` stands in for txdesk. The language dialog gets a copy of the languages and a callback that applies Done straight to `menus.System`; on Linux that is a message to txdesk, which tells the compositor.
 - Labels do not wrap yet, so dialog notes are kept short.
-- The top-bar menus act on `menus.System` in the compositor only: no desktop service reports connections, sound, devices or layouts yet, and no command goes out. The simulator fills it with samples (`sampleSystem` in `tools/txsim/src/main.zig`); without them the lists are empty and the layout is "EN".
+- The top-bar menus act on `menus.System` in the compositor only: no desktop service reports connections, sound, devices or layouts yet, and no command goes out. The simulator fills it with samples (`sampleSystem` in `de/txsim/src/main.zig`); without them the lists are empty and the layout is "EN".
 - The simulator window is shrunk to fit the screen's usable area unless `--size` is given; scripted runs keep 1440 x 900.
 
 - Rows of widgets do not wrap, so a fixed-content window dragged narrower than its content is cut on the right.

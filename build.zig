@@ -32,20 +32,20 @@ pub fn build(b: *std.Build) void {
     // ---------------------------------------------------------- modules
 
     const core = b.addModule("txcore", .{
-        .root_source_file = b.path("txcore/src/root.zig"),
+        .root_source_file = b.path("sdk/txcore/src/root.zig"),
         .target = target,
         .optimize = optimize,
-        // Sockets go through libc (see txcore/src/ipc.zig).
+        // Sockets go through libc (see sdk/txcore/src/ipc.zig).
         .link_libc = true,
     });
     const widgets = b.addModule("txwidgets", .{
-        .root_source_file = b.path("txwidgets/src/root.zig"),
+        .root_source_file = b.path("sdk/txwidgets/src/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{.{ .name = "txcore", .module = core }},
     });
     const comp = b.addModule("txcomp", .{
-        .root_source_file = b.path("txcomp/src/root.zig"),
+        .root_source_file = b.path("de/txcomp/src/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -54,7 +54,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     const wl = b.addModule("txwl", .{
-        .root_source_file = b.path("txwl/src/root.zig"),
+        .root_source_file = b.path("de/txwl/src/root.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
@@ -64,7 +64,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     const gpu = b.addModule("txgl", .{
-        .root_source_file = b.path("txgl/src/root.zig"),
+        .root_source_file = b.path("de/txgl/src/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -73,7 +73,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     const controls = b.addModule("controls", .{
-        .root_source_file = b.path("apps/controls/src/root.zig"),
+        .root_source_file = b.path("sdk/gallery/src/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -83,7 +83,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const languages = b.addModule("languages", .{
-        .root_source_file = b.path("apps/languages/src/root.zig"),
+        .root_source_file = b.path("de/apps/languages/src/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -96,7 +96,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run all unit tests");
     const headless = b.createModule(.{
-        .root_source_file = b.path("tools/txsim/src/headless_test.zig"),
+        .root_source_file = b.path("de/txsim/src/headless_test.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -108,31 +108,31 @@ pub fn build(b: *std.Build) void {
         },
     });
     const apps_test = b.createModule(.{
-        .root_source_file = b.path("txdesk/src/apps/root.zig"),
+        .root_source_file = b.path("de/txdesk/src/apps/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{.{ .name = "txcore", .module = core }},
     });
     const trust_test = b.createModule(.{
-        .root_source_file = b.path("txdesk/src/trust.zig"),
+        .root_source_file = b.path("de/txdesk/src/trust.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{.{ .name = "txcore", .module = core }},
     });
     const focus_test = b.createModule(.{
-        .root_source_file = b.path("txdesk/src/focus.zig"),
+        .root_source_file = b.path("de/txdesk/src/focus.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{.{ .name = "txcore", .module = core }},
     });
     const icons_test = b.createModule(.{
-        .root_source_file = b.path("txdesk/src/icons.zig"),
+        .root_source_file = b.path("de/txdesk/src/icons.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{.{ .name = "txcore", .module = core }},
     });
     const stub_test = b.createModule(.{
-        .root_source_file = b.path("tools/txsim/src/sdl_stub.zig"),
+        .root_source_file = b.path("de/txsim/src/sdl_stub.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -146,7 +146,7 @@ pub fn build(b: *std.Build) void {
     const desk = b.addExecutable(.{
         .name = "txdesk",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("txdesk/src/main.zig"),
+            .root_source_file = b.path("de/txdesk/src/main.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{.{ .name = "txcore", .module = core }},
@@ -162,7 +162,7 @@ pub fn build(b: *std.Build) void {
     const no_sim = b.option(bool, "no-sim", "Skip the SDL3 simulator") orelse false;
     if (!no_sim) {
         const sim_mod = b.createModule(.{
-            .root_source_file = b.path("tools/txsim/src/main.zig"),
+            .root_source_file = b.path("de/txsim/src/main.zig"),
             .target = target,
             .optimize = optimize,
             .link_libc = true,
@@ -176,7 +176,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "txgl", .module = gpu },
             },
         });
-        // SDL3 is declared by hand in tools/txsim/src/sdl.zig (no C headers
+        // SDL3 is declared by hand in de/txsim/src/sdl.zig (no C headers
         // needed); only the library is linked. Homebrew on Apple Silicon in
         // case pkg-config is missing.
         if (target.result.os.tag == .macos) {
@@ -199,7 +199,7 @@ pub fn build(b: *std.Build) void {
                 .name = "SDL3",
                 .version = .{ .major = 0, .minor = 0, .patch = 0 },
                 .root_module = b.createModule(.{
-                    .root_source_file = b.path("tools/txsim/src/sdl_stub.zig"),
+                    .root_source_file = b.path("de/txsim/src/sdl_stub.zig"),
                     .target = target,
                     .optimize = optimize,
                 }),

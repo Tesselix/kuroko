@@ -1,7 +1,7 @@
 //! The user's trust marks as txdesk keeps them: the file `trust.krkde`
 //! (one TrustHeader, then TrustMark records), the records sent to the
 //! compositor (DeskTrust), and app signatures (SHA-256 of the binary).
-//! The rules that turn marks into a level are shared: txcore/src/trust.zig.
+//! The rules that turn marks into a level are shared: sdk/txcore/src/trust.zig.
 //!
 //! txdesk is the file's writer while it runs; `txdesk trust ...` also
 //! writes it, and the running txdesk notices the change and reloads.

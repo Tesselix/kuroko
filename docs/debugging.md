@@ -41,7 +41,7 @@ A trace event is a Kuroko record (`txcore.format`) with a fixed-width payload he
 
 Kind-specific fields follow, fixed-width. Variable data (a title, a protocol message's arguments) comes as trailing bytes with a length, as in `SceneWindow`.
 
-- Trace types get their own range in `txcore/src/types.zig` (suggestion: `0x07xx`; `0x06xx` holds the trust marks).
+- Trace types get their own range in `sdk/txcore/src/types.zig` (suggestion: `0x07xx`; `0x06xx` holds the trust marks).
 - Text that already has an ID is not repeated: a window's title is sent once in a "named" event, and later events carry only the window's ID.
 
 ### Spans

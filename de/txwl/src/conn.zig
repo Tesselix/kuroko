@@ -3,7 +3,7 @@
 //! id. The compositor never waits: a write that does not fit stays queued;
 //! a client that stops reading and fills the queue is disconnected.
 //!
-//! libc directly (std.Io blocks the calling task; see txcore/src/ipc.zig).
+//! libc directly (std.Io blocks the calling task; see sdk/txcore/src/ipc.zig).
 
 const std = @import("std");
 const builtin = @import("builtin");

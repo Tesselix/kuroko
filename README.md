@@ -15,19 +15,41 @@ The design is in [`docs/`](docs/README.md). Start with the Top-Level Design.
 
 ## Layout
 
+The repository has three parts. `de/` and `sim/` depend on `sdk/`, and never on each other: the desktop and the simulator meet only at run time, through the kernel and D-Bus.
+
+**`sdk/`: the Kuroko SDK, what an app needs**
+
 | Folder | What it is |
 | --- | --- |
-| `txcore/` | Shared by everything: binary format and repair ladder, object registry (handles, guards), geometry, input events, theme roles, animation, wheel bands, timing histograms, IPC helpers |
-| `txwidgets/` | Widget library (Mode A): canvas rasterizer, fonts, widget tree and layout, buttons, toggles, checkboxes, progress, text fields, the document view with the scrolling behavior |
-| `txcomp/` | Compositor core: window model, attention tiling, chrome, top bar, launcher, shelf, event publisher. Backend-independent |
-| `txwl/` | Kuroko as a Wayland server: the wire format, the core and xdg-shell protocols in pure Zig. Apps' windows become compositor windows like Kuroko's own |
-| `txgl/` | The GPU renderer: draws the compositor's recorded frames with OpenGL ES 3.0 (OpenGL 3.3 on the Mac). Shared by every backend |
-| `txdesk/` | Desktop services. Now: a stub context hub that prints the scene graph as text |
-| `txdk/` | SDK for other languages (C ABI, Mode B UI host, bindings). Not started |
-| `apps/controls/` | The controls app: every widget's behavior in one place, growing with the library |
-| `apps/languages/` | The language dialog: Kuroko's own dialog, built with the widget library like any app |
-| `tools/txsim/` | Simulator backend: runs the compositor in one SDL3 window on macOS |
-| `tools/fontgen/` | Generates the font atlases (stopgap until the text stack is chosen) |
+| `sdk/txcore/` | Shared by everything: binary format and repair ladder, object registry (handles, guards), geometry, input events, theme roles, animation, wheel bands, timing histograms, IPC helpers |
+| `sdk/txwidgets/` | Widget library (Mode A): canvas rasterizer, fonts, widget tree and layout, buttons, toggles, checkboxes, progress, text fields, the document view with the scrolling behavior |
+| `sdk/txdk/` | SDK for other languages (C ABI, Mode B UI host, bindings). Not started |
+| `sdk/gallery/` | The gallery (the Controls app): every widget's behavior in one place, growing with the library |
+| `sdk/tools/fontgen/` | Generates the font atlases (stopgap until the text stack is chosen) |
+
+**`de/`: the desktop environment**
+
+| Folder | What it is |
+| --- | --- |
+| `de/txcomp/` | Compositor core: window model, attention tiling, chrome, top bar, launcher, shelf, event publisher. Backend-independent |
+| `de/txwl/` | Kuroko as a Wayland server: the wire format, the core and xdg-shell protocols in pure Zig. Apps' windows become compositor windows like Kuroko's own |
+| `de/txgl/` | The GPU renderer: draws the compositor's recorded frames with OpenGL ES 3.0 (OpenGL 3.3 on the Mac). Shared by every backend |
+| `de/txdesk/` | Desktop services. Now: a stub context hub that prints the scene graph as text |
+| `de/apps/languages/` | The language dialog: Kuroko's own dialog, built with the widget library like any app |
+| `de/txsim/` | Simulator backend: runs the compositor in one SDL3 window on macOS. Also holds the headless test of the whole stack |
+
+**`sim/`: krksim, the device simulator**
+
+| Folder | What it is |
+| --- | --- |
+| `sim/` | Virtual Wi-Fi networks, wired LAN cards and Bluetooth devices on the test VM, for testing Kuroko's device management. Not started |
+
+**Repo-wide**
+
+| Folder | What it is |
+| --- | --- |
+| `docs/` | The design documents |
+| `tools/ubuntu/` | Build for the Ubuntu ARM VM and run there |
 
 ## Running on the Mac
 
@@ -156,7 +178,7 @@ read it, copy it to your home folder first and run from there:
 `sudo cp -r /mnt/shared/kuroko ~/kuroko && sudo chown -R $USER: ~/kuroko`.
 
 Cross-compiling needs no SDL3 for the target on the Mac: the build links
-against a stub with the same names (`tools/txsim/src/sdl_stub.zig`), and the
+against a stub with the same names (`de/txsim/src/sdl_stub.zig`), and the
 VM's own `libSDL3.so.0` is used at run time.
 
 ## Linux (later)

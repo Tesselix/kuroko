@@ -6,8 +6,8 @@ question: HarfBuzz + FreeType, or pure Zig). Atlases are pre-rendered alpha
 masks at fixed physical pixel sizes, one record per file.
 
 Usage:
-    python3 tools/fontgen/gen_fonts.py REGULAR.otf SEMIBOLD.otf OUT_DIR
-    python3 tools/fontgen/gen_fonts.py --hebrew REGULAR.ttf SEMIBOLD.ttf OUT_DIR
+    python3 sdk/tools/fontgen/gen_fonts.py REGULAR.otf SEMIBOLD.otf OUT_DIR
+    python3 sdk/tools/fontgen/gen_fonts.py --hebrew REGULAR.ttf SEMIBOLD.ttf OUT_DIR
 
 The first renders the UI font (Inter). The second renders the Hebrew
 fallback atlases (Noto Sans Hebrew), used for what the UI font lacks.

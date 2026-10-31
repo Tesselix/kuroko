@@ -9,12 +9,9 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "txcore",
-        "txcomp",
-        "txdesk",
-        "txwidgets",
-        "txdk",
-        "apps",
+        "sdk",
+        "de",
+        "sim",
         "tools",
     },
 }

@@ -97,7 +97,7 @@ comptime {
     std.debug.assert(@sizeOf(SceneWindow) == 40);
 }
 
-/// Font atlas asset (written by tools/fontgen, read by txwidgets).
+/// Font atlas asset (written by sdk/tools/fontgen, read by txwidgets).
 /// Trailing data: `glyph_count` FontGlyph entries, then the alpha bitmap.
 pub const FontAtlas = extern struct {
     pixel_size: u16,
@@ -303,7 +303,7 @@ comptime {
 // (docs/user-signals.md). The user marks apps, files and folders; txdesk
 // keeps the marks in trust.krkde (one TrustHeader, then TrustMark records)
 // and sends them to the compositor (DeskTrust), which decides each
-// window's trust with the shared rules in txcore/src/trust.zig.
+// window's trust with the shared rules in sdk/txcore/src/trust.zig.
 
 pub const Trust = enum(u8) {
     /// Nothing known (no mark, and the rule does not say).

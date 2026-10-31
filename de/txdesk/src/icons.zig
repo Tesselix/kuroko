@@ -1,6 +1,6 @@
 //! App icons for the desktop: txdesk draws each installed app's icon file
 //! (from its desktop entry, resolved by the scanner) as pixels at the sizes
-//! the desktop uses, and keeps them in icons.krkde (txcore/src/icons.zig).
+//! the desktop uses, and keeps them in icons.krkde (sdk/txcore/src/icons.zig).
 //! The compositor reads the pixels; it never decodes an image file, which
 //! comes from packages Kuroko does not control.
 //!

@@ -34,7 +34,7 @@ Read this first, then the design documents in `docs/` for the part you touch.
    client death is detected from the socket closing.
 3. Every structure that crosses a process or reaches disk is a Kuroko record
    (`txcore.format`), with fixed-width fields, little-endian, extern structs.
-   Register type IDs in `txcore/src/types.zig`. Files of Kuroko records
+   Register type IDs in `sdk/txcore/src/types.zig`. Files of Kuroko records
    use the extension `.krkde` (for example `apps.krkde`).
 4. Theme roles only, never hard-coded colors. No state by color alone: add a
    shape cue. Nothing flashes more than 3 times per second.
@@ -48,10 +48,10 @@ Read this first, then the design documents in `docs/` for the part you touch.
 ## Layout and commands
 
 See `README.md`. `zig build test` must pass before a commit. New widgets and
-behaviors get a place in `apps/controls`.
+behaviors get a place in `sdk/gallery`.
 
 ## The simulator
 
-`tools/txsim` is a thin SDL3 backend for macOS. Everything it does must be
+`de/txsim` is a thin SDL3 backend for macOS. Everything it does must be
 expressible over the real protocols (Wayland plus the Kuroko protocol);
-`txwidgets/src/surface.zig` is that contract.
+`sdk/txwidgets/src/surface.zig` is that contract.

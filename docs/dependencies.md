@@ -21,8 +21,8 @@ Kuroko uses the **latest solid** version of every tool and library.
 | --- | --- | --- | --- | --- | --- |
 | Zig | 0.16.0 | 2026-04-14 | 2026-07-14 | 0.17.0 (2026-10-04) | 2027-01-04 |
 | SDL (simulator only) | 3.4.x, newest patch (3.4.18 when written) | 2026-01-01 | 2026-04-01 | — | — |
-| Inter font (atlases) | as shipped by the build machine; regenerate with `tools/fontgen` | | | | |
-| Noto Sans Hebrew (fallback atlases) | 3.001 (notofonts, hinted TTF); regenerate with `tools/fontgen --hebrew` | | | | |
+| Inter font (atlases) | as shipped by the build machine; regenerate with `sdk/tools/fontgen` | | | | |
+| Noto Sans Hebrew (fallback atlases) | 3.001 (notofonts, hinted TTF); regenerate with `sdk/tools/fontgen --hebrew` | | | | |
 
 GPU: OpenGL ES 3.0 (Linux) and OpenGL 3.3 core (macOS), from the system's
 driver (Mesa on Linux); loaded at run time, nothing to pin.

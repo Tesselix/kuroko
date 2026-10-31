@@ -62,7 +62,7 @@ try fw.interface.flush();
 - `std.posix` lost `socket/accept/read/write/close/getenv`. `std.Io.net` has
   Unix sockets (`std.Io.net.UnixAddress`), but its calls block the task.
 - The compositor needs non-blocking sockets in its own loop, so
-  `txcore/src/ipc.zig` calls libc directly (`std.c.socket`, `accept`,
+  `sdk/txcore/src/ipc.zig` calls libc directly (`std.c.socket`, `accept`,
   `write`, ... with `std.c.errno`). Modules using it link libc.
 - `std.posix.sigaction` and `std.posix.sigemptyset` still exist.
 
@@ -98,7 +98,7 @@ try fw.interface.flush();
 - Avoid `@cImport` (deprecated in 0.16, removed in 0.17; in 0.16 it fails on
   macOS ARM headers such as `arm_neon.h`). Declare the few C functions needed
   with `extern "c"` and check struct layouts with comptime asserts, as in
-  `tools/txsim/src/sdl.zig`.
+  `de/txsim/src/sdl.zig`.
 - `build.zig.zon` needs `.name = .enum_literal` and a `.fingerprint`.
 
 ## Moving to 0.17

@@ -149,7 +149,7 @@ pub const AppInfo = struct {
 };
 
 /// An entry of Focus or Recent: an app (its launcher index) and why it is
-/// offered (txcore/src/influence.zig).
+/// offered (sdk/txcore/src/influence.zig).
 pub const Pick = struct {
     app: usize,
     reason: core.types.InfluenceReason = .opened,

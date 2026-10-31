@@ -1,5 +1,5 @@
 //! The app registry in memory, and its file `apps.krkde` (Kuroko records,
-//! see txcore/src/types.zig). txdesk is its only writer.
+//! see sdk/txcore/src/types.zig). txdesk is its only writer.
 //!
 //! Strings live in the store's arena. A scan changes few strings, so the
 //! arena grows slowly; a long-running txdesk reloads the file to start a
