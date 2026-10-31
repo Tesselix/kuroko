@@ -74,7 +74,7 @@ fi
 # The same cage settings as run.sh (see the reasons there).
 export WLR_RENDERER="${TX_WLR_RENDERER:-gles2}"
 export WLR_NO_HARDWARE_CURSORS=1
-TX_MODE="${TX_MODE-1920x1200}"
+TX_MODE="${TX_MODE-2560x1440}"
 if [ -n "$TX_MODE" ] && ! command -v wlr-randr >/dev/null; then
     echo "wlr-randr is missing, so the screen stays at the VM's size: sudo apt install wlr-randr" >&2
     TX_MODE=""
@@ -86,9 +86,13 @@ status=0
 cage -- sh -c '
     if [ -n "$TX_MODE" ]; then
         out=$(wlr-randr | head -n1 | cut -d" " -f1)
-        wlr-randr --output "$out" --mode "$TX_MODE" \
-            && echo "screen: $out at $TX_MODE" \
-            || echo "screen: could not set $TX_MODE on $out"
+        if wlr-randr --output "$out" --mode "$TX_MODE" 2>/dev/null; then
+            echo "screen: $out at $TX_MODE"
+        elif wlr-randr --output "$out" --custom-mode "$TX_MODE"; then
+            echo "screen: $out at $TX_MODE (custom mode)"
+        else
+            echo "screen: could not set $TX_MODE on $out"
+        fi
     fi
     exec "$0" "$@"' "$browser" "$@" >>"$log" 2>&1 || status=$?
 echo "== $browser exited with status $status" >>"$log"

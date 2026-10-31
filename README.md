@@ -25,6 +25,7 @@ The design is in [`docs/`](docs/README.md). Start with the Top-Level Design.
 | `txdesk/` | Desktop services. Now: a stub context hub that prints the scene graph as text |
 | `txdk/` | SDK for other languages (C ABI, Mode B UI host, bindings). Not started |
 | `apps/controls/` | The controls app: every widget's behavior in one place, growing with the library |
+| `apps/languages/` | The language dialog: Kuroko's own dialog, built with the widget library like any app |
 | `tools/txsim/` | Simulator backend: runs the compositor in one SDL3 window on macOS |
 | `tools/fontgen/` | Generates the font atlases (stopgap until the text stack is chosen) |
 
@@ -114,7 +115,13 @@ sh /mnt/shared/kuroko/check.sh   # is the VM ready? (changes nothing)
 sh /mnt/shared/kuroko/setup.sh   # once: libSDL3, Mesa, kmscube, video/render/input groups
 sh /mnt/shared/kuroko/run.sh     # the compositor, desktop and apps, full screen
 sh /mnt/shared/kuroko/run.sh --dark --tiled   # txsim options pass through (--panel, --tiled, --dark)
+TX_MODE=1920x1200 sh /mnt/shared/kuroko/run.sh   # another screen size
 ```
+
+The screen is 2560x1440 by default, the size of the Mac screen UTM shows
+it on, so each VM pixel is one screen pixel and text stays sharp. On
+another screen, set `TX_MODE` to its size; a size the virtual GPU does not
+list is set as a custom mode.
 
 A third-party app for comparison, Google Chrome, runs the same way (in cage, full
 screen; Kuroko cannot host outside apps until it is a Wayland server):

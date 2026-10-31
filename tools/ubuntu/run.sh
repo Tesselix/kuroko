@@ -7,8 +7,11 @@
 #   sh run.sh --dark          any txsim options pass through (--panel, --tiled, --script NAME)
 #   TX_DEBUG=1 sh run.sh      SDL3 logs every step (video, render, input)
 #   TX_DISPLAY=kms sh run.sh  SDL3 straight on KMS/DRM, without cage (see below)
-#   TX_MODE=2560x1600 sh run.sh   screen size, default 1920x1200 (one of the
-#                             lines in /sys/class/drm/card0-Virtual-1/modes);
+#   TX_MODE=1920x1200 sh run.sh   screen size, default 2560x1440 (the Mac
+#                             screen UTM shows it on: one VM pixel per
+#                             screen pixel, so text is sharp). A size not among
+#                             /sys/class/drm/card0-Virtual-1/modes is set as
+#                             a custom mode;
 #                             TX_MODE= (empty) keeps the VM's own 1280x800
 #
 # How it reaches the screen: txsim runs inside cage, a minimal Wayland
@@ -45,7 +48,7 @@ case "$display" in
         fi
         # Screen size inside cage; unset means the default, empty means
         # leave the VM's preferred mode (1280x800).
-        TX_MODE="${TX_MODE-1920x1200}"
+        TX_MODE="${TX_MODE-2560x1440}"
         if [ -n "$TX_MODE" ] && ! command -v wlr-randr >/dev/null; then
             echo "wlr-randr is missing, so the screen stays at the VM's size: sudo apt install wlr-randr" >&2
             TX_MODE=""
@@ -107,9 +110,15 @@ if [ "$display" = cage ]; then
     cage -- sh -c '
         if [ -n "$TX_MODE" ]; then
             out=$(wlr-randr | head -n1 | cut -d" " -f1)
-            wlr-randr --output "$out" --mode "$TX_MODE" \
-                && echo "screen: $out at $TX_MODE" \
-                || echo "screen: could not set $TX_MODE on $out (see the modes in /sys/class/drm/card0-*/modes)"
+            # A listed mode first; else a custom one (virtio-gpu lists only
+            # a few, often not the host screen size, such as 2560x1440).
+            if wlr-randr --output "$out" --mode "$TX_MODE" 2>/dev/null; then
+                echo "screen: $out at $TX_MODE"
+            elif wlr-randr --output "$out" --custom-mode "$TX_MODE"; then
+                echo "screen: $out at $TX_MODE (custom mode)"
+            else
+                echo "screen: could not set $TX_MODE on $out (see the modes in /sys/class/drm/card0-*/modes)"
+            fi
         fi
         exec "$0" --fullscreen "$@"' "$bin/txsim" "$@" >>"$log" 2>&1 || status=$?
 else

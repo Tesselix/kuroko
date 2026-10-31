@@ -21,6 +21,10 @@ touches. Change the code and this file together.
 | Center marker visibility (Look and Controls) | While scrolling and while the map is open; fades over 0.4 s after 1 s at rest | `txwidgets/src/doc_view.zig` |
 | Exact theme colors (Look and Controls) | First values in `txcore/src/theme.zig`, light and dark | |
 | Text stack and 2D rendering (Widget Framework) | Stopgap: own CPU rasterizer and pre-rendered Inter atlases; no shaping, no bidi, no Hebrew yet. The compositor's frame goes to the GPU as a draw list (see "GPU rendering") | `txwidgets/src/canvas.zig`, `font.zig`, `draw_list.zig` |
+| Top-bar menu icons (Top-Level) | 32 px buttons side by side with no gap, 2 px from the right edge, so the row is one target; the date and time sit right-aligned in a fixed 124 px slot in the corner, so the icons do not move as it changes; the learning indicator sits 8 px left of the language icon. The simulator formats the date as "Fri Oct 30  13:35" (24-hour, English) until locale formatting exists | `txcomp/src/shell.zig` |
+| Top-bar menus (Top-Level) | Under the bar at the right, 8 px from the edge; control center 320 px wide, device center 380, the others 300. Details (a connection's, a device's) replace the menu's content in the same panel, as on macOS, not a separate dialog. Wi-Fi joins a network with one click; the password prompt comes with the backend. A user action changes `menus.System` at once; the desktop service will confirm or correct it, and the compositor never waits for it | `txcomp/src/menus.zig` |
+| Dialogs (Top-Level, "Dialogs") | Kept outside the window registry, in their own list (`dialogs.zig`); the content gets a 6 px frame with 14 px corners, so its square corners stay inside. Dimming for a modal one is the theme's shadow color at alpha 90, over the parent's frame or the whole screen. A window asks for a dialog through `Surface.take_dialog` (Wayland: a new toplevel with a parent), picked up once per frame. A second request from the same desktop dialog name raises the open one instead of opening another | `txcomp/src/dialogs.zig`, `txcomp/src/compositor.zig` |
+| Mobile-first widgets (Widget Framework) | Rows are 44 px, 54 with a subtitle; a grouped list's card takes the other of `surface` and `surface_alt` from the window's background; a header bar centers its title on the whole bar; a scroll area scrolls by 44 px lines with the document view's wheel physics. A top-level column now takes the window's height, so a scroll area in it gets the room left | `txwidgets/src/window.zig` |
 | Panel icon size (Top-Level) | 52 px icons, 14 px apart, centered in the 76 px panel; a status line runs under the icon | `txcomp/src/compositor.zig` |
 | Quick drag out of the panel (Top-Level) | Released within 0.3 s of the press; `quick_drag_ms` | `txcomp/src/compositor.zig` |
 | Reorder preview (Top-Level, Swapping) | The pointer rests 0.12 s on a tile before its window moves aside (`reorder_dwell_ms`); a drop before that still swaps. The target is found in the tiles as they were when the drag began, so a swap that moves the borders cannot flip it back and forth | `txcomp/src/compositor.zig` |
@@ -338,7 +342,9 @@ touches. Change the code and this file together.
 
 ## Known limits
 
-- The gear and the control center open the same small panel of switches for now.
+- Desktop dialogs are opened by the backend (`Compositor.desktop_dialogs`); in the simulator, `openDesktopDialog` in `tools/txsim/src/main.zig` stands in for txdesk. The language dialog gets a copy of the languages and a callback that applies Done straight to `menus.System`; on Linux that is a message to txdesk, which tells the compositor.
+- Labels do not wrap yet, so dialog notes are kept short.
+- The top-bar menus act on `menus.System` in the compositor only: no desktop service reports connections, sound, devices or layouts yet, and no command goes out. The simulator fills it with samples (`sampleSystem` in `tools/txsim/src/main.zig`); without them the lists are empty and the layout is "EN".
 - The simulator window is shrunk to fit the screen's usable area unless `--size` is given; scripted runs keep 1440 x 900.
 
 - Rows of widgets do not wrap, so a fixed-content window dragged narrower than its content is cut on the right.

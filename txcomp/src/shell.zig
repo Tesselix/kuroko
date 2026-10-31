@@ -5,6 +5,7 @@ const std = @import("std");
 const core = @import("txcore");
 const tw = @import("txwidgets");
 const chrome = @import("chrome.zig");
+const glyphs = @import("glyphs.zig");
 
 const Rect = core.Rect;
 const Theme = core.Theme;
@@ -41,14 +42,25 @@ pub fn drawAppsIcon(cv: *Canvas, th: *const Theme, r: Rect, hovered: bool, open:
 
 // ------------------------------------------------------------- top bar
 
-pub const TopBarHit = enum { none, apps, gear, control_center, learning };
+/// From the right corner: the date and time, then settings, control
+/// center, device center, language; the learning indicator to their left.
+pub const TopBarHit = enum { none, apps, gear, control_center, devices, language, learning };
+
+/// The four menu icons at the right, from the corner inward.
+pub const menu_icons = [_]TopBarHit{ .gear, .control_center, .devices, .language };
 
 /// The Apps button at the left of the top bar opens the launcher.
 pub const apps_w = 36;
+/// One menu icon's button: side by side, no gap, so the row is one target.
+const icon_w = 32;
+/// The date and time in the right corner ("Fri Oct 30  13:35"), right
+/// aligned in a fixed slot so the icons do not move as it changes.
+pub const datetime_w = 124;
+const learning_w = 74;
 
 pub fn topBarHit(screen_w: i32, x: f32, y: f32) TopBarHit {
     if (y >= top_bar_h or y < 0) return .none;
-    for ([_]TopBarHit{ .apps, .gear, .control_center, .learning }) |which| {
+    for ([_]TopBarHit{ .apps, .gear, .control_center, .devices, .language, .learning }) |which| {
         if (topBarRect(screen_w, which).contains(x, @min(y, top_bar_h - 3))) return which;
     }
     return .none;
@@ -57,59 +69,59 @@ pub fn topBarHit(screen_w: i32, x: f32, y: f32) TopBarHit {
 /// Hover and press area of a top-bar button.
 pub fn topBarRect(w: i32, which: TopBarHit) Rect {
     return switch (which) {
-        .gear => .{ .x = w - 34, .y = 2, .w = 32, .h = top_bar_h - 4 },
-        .control_center => .{ .x = w - 66, .y = 2, .w = 32, .h = top_bar_h - 4 },
-        .learning => .{ .x = w - 192, .y = 3, .w = 74, .h = top_bar_h - 6 },
+        .gear, .control_center, .devices, .language => {
+            const i: i32 = @intCast(std.mem.indexOfScalar(TopBarHit, &menu_icons, which).?);
+            return .{ .x = w - 8 - datetime_w - icon_w * (i + 1), .y = 2, .w = icon_w, .h = top_bar_h - 4 };
+        },
+        .learning => .{ .x = topBarRect(w, .language).x - 8 - learning_w, .y = 3, .w = learning_w, .h = top_bar_h - 6 },
         .apps => .{ .x = 4, .y = 2, .w = apps_w - 8, .h = top_bar_h - 4 },
         .none => .{},
     };
 }
 
-pub fn drawTopBar(cv: *Canvas, th: *const Theme, w: i32, clock: []const u8, learning: bool, hint: []const u8, hover: TopBarHit, launcher_open: bool, panel_from: TopBarHit) void {
+/// `clock` is the date and time; `layout` the current keyboard layout's
+/// code ("EN").
+pub fn drawTopBar(cv: *Canvas, th: *const Theme, w: i32, clock: []const u8, learning: bool, layout: []const u8, hint: []const u8, hover: TopBarHit, launcher_open: bool, menu_from: TopBarHit) void {
     const bar = Rect{ .x = 0, .y = 0, .w = w, .h = top_bar_h };
-    cv.fillRect(bar, th.get(.chrome_focused).fade(0.96));
+    const bg = th.get(.chrome_focused);
+    cv.fillRect(bar, bg.fade(0.96));
     cv.hairlineHBottom(0, top_bar_h - 1, w, th.get(.hairline));
     const cy: f32 = top_bar_h / 2;
     const col = th.get(.chrome_text);
 
     // Every icon is a button: a tint on hover, a stronger one while the
-    // panel it opened is showing.
-    for ([_]TopBarHit{ .gear, .control_center, .learning }) |which| {
+    // menu it opened is showing.
+    for (menu_icons ++ [_]TopBarHit{.learning}) |which| {
         const r = topBarRect(w, which);
-        if (panel_from == which) {
+        if (menu_from == which) {
             cv.fillRoundRect(r, 6, th.get(.accent).fade(0.24));
         } else if (hover == which) cv.fillRoundRect(r, 6, th.get(.accent).fade(0.14));
     }
 
-    // From the right corner: gear, then control center, then indicators.
-    const gx: f32 = @floatFromInt(w - 17);
-    var i: f32 = 0;
-    while (i < 8) : (i += 1) {
-        const a = i / 8 * std.math.tau;
-        cv.line(gx + 5 * @cos(a), cy + 5 * @sin(a), gx + 7.2 * @cos(a), cy + 7.2 * @sin(a), 2.2, col);
+    for (menu_icons) |which| {
+        const r = topBarRect(w, which);
+        const ix = @as(f32, @floatFromInt(r.x)) + @as(f32, @floatFromInt(r.w)) / 2;
+        switch (which) {
+            .gear => glyphs.gear(cv, ix, cy, col, bg),
+            .control_center => glyphs.toggles(cv, ix, cy, col),
+            .devices => glyphs.devices(cv, ix, cy, col, bg),
+            .language => glyphs.layoutKey(cv, ix, cy, layout, col),
+            else => unreachable,
+        }
     }
-    cv.fillCircle(gx, cy, 5.2, col);
-    cv.fillCircle(gx, cy, 2.4, th.get(.chrome_focused));
-
-    const cx: f32 = @floatFromInt(w - 50);
-    cv.line(cx - 7, cy - 3.5, cx + 7, cy - 3.5, 1.5, col);
-    cv.line(cx - 7, cy + 3.5, cx + 7, cy + 3.5, 1.5, col);
-    cv.fillCircle(cx + 3, cy - 3.5, 2.6, col);
-    cv.fillCircle(cx - 3, cy + 3.5, 2.6, col);
 
     const small: font.Style = .{ .size = .body };
     const m = font.Metrics.of(small, cv.scale);
-    const clock_w = m.width(clock);
-    const clock_x = cx - 22 - clock_w;
-    _ = cv.text(clock_x, @floatFromInt(@divTrunc(top_bar_h - m.lineHeight(), 2)), clock, small, col);
+    // The date and time in the corner, as on macOS.
+    _ = cv.text(@as(f32, @floatFromInt(w - 10)) - m.width(clock), @floatFromInt(@divTrunc(top_bar_h - m.lineHeight(), 2)), clock, small, col);
 
     // Learning indicator: a shape (filled dot vs ring) plus a word.
-    const lx = clock_x - 84;
+    const lx: f32 = @floatFromInt(topBarRect(w, .learning).x + 8);
     if (learning) {
         cv.fillCircle(lx, cy, 3.5, th.get(.accent));
     } else {
         cv.fillCircle(lx, cy, 3.5, th.get(.text_dim));
-        cv.fillCircle(lx, cy, 2, th.get(.chrome_focused));
+        cv.fillCircle(lx, cy, 2, bg);
     }
     _ = cv.text(lx + 8, @floatFromInt(@divTrunc(top_bar_h - m.lineHeight(), 2)), if (learning) "Learning" else "Paused", small, th.get(.text_dim));
 
@@ -119,64 +131,6 @@ pub fn drawTopBar(cv: *Canvas, th: *const Theme, w: i32, clock: []const u8, lear
 
     _ = cv.text(apps_w + 10, @floatFromInt(@divTrunc(top_bar_h - m.lineHeight(), 2)), hint, .{ .size = .small }, th.get(.text_dim));
 }
-
-// ------------------------------------------------------- control center
-
-/// The small panel the gear and the control-center icon open, under the
-/// top bar at the right. Each row is a switch; a click flips it.
-pub const ControlCenter = struct {
-    from: TopBarHit = .none,
-
-    pub const Row = enum { dark, learning, wheel_natural, touchpad_natural };
-    pub const rows = [_]Row{ .dark, .learning, .wheel_natural, .touchpad_natural };
-    const row_h = 40;
-    const width = 300;
-
-    pub fn isOpen(self: ControlCenter) bool {
-        return self.from != .none;
-    }
-
-    pub fn rect(_: ControlCenter, screen_w: i32) Rect {
-        return .{ .x = screen_w - width - 8, .y = top_bar_h + 6, .w = width, .h = 44 + rows.len * row_h + 10 };
-    }
-
-    fn rowRect(self: ControlCenter, screen_w: i32, i: usize) Rect {
-        const r = self.rect(screen_w);
-        return .{ .x = r.x + 8, .y = r.y + 44 + @as(i32, @intCast(i)) * row_h, .w = r.w - 16, .h = row_h };
-    }
-
-    pub fn rowAt(self: ControlCenter, screen_w: i32, x: f32, y: f32) ?Row {
-        for (rows, 0..) |row, i| {
-            if (self.rowRect(screen_w, i).contains(x, y)) return row;
-        }
-        return null;
-    }
-
-    pub fn draw(self: ControlCenter, cv: *Canvas, th: *const Theme, screen_w: i32, values: [rows.len]bool, px: f32, py: f32) void {
-        if (!self.isOpen()) return;
-        const r = self.rect(screen_w);
-        cv.fillRoundRect(r.translate(0, 4), 12, th.get(.shadow));
-        cv.fillRoundRect(r, 12, th.get(.surface));
-        cv.strokeRoundRect(r, 12, 1, th.get(.border));
-        const title = if (self.from == .gear) "Settings" else "Control Center";
-        _ = cv.text(@floatFromInt(r.x + 18), @floatFromInt(r.y + 14), title, .{ .size = .body, .weight = .semibold }, th.get(.text));
-        const labels = [_][]const u8{ "Dark mode", "Learning", "Natural scrolling: mouse wheel", "Natural scrolling: touchpad" };
-        const m = font.Metrics.of(.{}, cv.scale);
-        for (rows, 0..) |_, i| {
-            const rr = self.rowRect(screen_w, i);
-            if (rr.contains(px, py)) cv.fillRoundRect(rr, 8, th.get(.accent).fade(0.10));
-            _ = cv.text(@floatFromInt(rr.x + 10), @floatFromInt(rr.y + @divTrunc(rr.h - m.lineHeight(), 2)), labels[i], .{}, th.get(.text));
-            // Switch: a pill with a knob; on = accent and knob on the right
-            // (position, not only color).
-            const on = values[i];
-            const sw = Rect{ .x = rr.right() - 48, .y = rr.y + @divTrunc(rr.h - 20, 2), .w = 38, .h = 20 };
-            cv.fillRoundRect(sw, 10, th.get(if (on) .accent else .surface_sunken));
-            cv.strokeRoundRect(sw, 10, 1, th.get(if (on) .accent else .border));
-            const kx: f32 = @floatFromInt(if (on) sw.right() - 10 else sw.x + 10);
-            cv.fillCircle(kx, @as(f32, @floatFromInt(sw.y)) + 10, 7, .rgb(0xFFFFFF));
-        }
-    }
-};
 
 // ------------------------------------------------------------- launcher
 

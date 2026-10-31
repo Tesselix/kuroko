@@ -147,6 +147,22 @@ accessibility settings (reduce motion, reduce transparency, contrast) above all
 | Data | Virtual list and table with sort header, tree, sparkline and load graph |
 | Surfaces | Dialog attached to its parent, popover, menu |
 
+### Mobile first (agreed, 2026-10-30)
+
+The widgets start from what works on phones (iOS and Android), the most refined widget sets today, not from the classic desktop ones; the pointer and keyboard get hover tints, focus rings and shortcuts on top.
+
+| Widget | What it is |
+| --- | --- |
+| Header bar | Title in the middle, a plain action at the left (Cancel), the main one at the right (Done), as at the top of a phone sheet |
+| Search field | A rounded field with a magnifier and a clear button; filters as you type |
+| Grouped list | Rows on a rounded card, with a small heading above and a note below |
+| List row | A leading badge or icon, a title and an optional subtitle, and one trailing accessory: check mark, chevron, switch or value |
+| Scroll area | Its content scrolls by rows with the standard wheel bands |
+
+- **Later:** segmented control, stepper, chips, action sheet; swipe actions become a row's actions on hover.
+- A list keeps its order while it is visible (the refresh rule); checking a row never moves it.
+- The first users are Kuroko's own dialogs, starting with the language dialog, built with the SDK like any other app.
+
 - **Virtual lists:** the library asks the app only for the rows in view (a callback in Mode A, a "list rows" request in Mode B). The process window and file manager need this for thousands of entries.
 
 ### Human-factors rules built into the library (follows agreed)

@@ -275,8 +275,21 @@ Every window has four buttons: **close, minimize, maximize, full screen**.
 
 - (suggestion) **Opening a 5th window** sends the least recently used one to the panel, animated. Dropping the new window onto a slot replaces that slot's window instead.
 - (suggestion) **Dragging a title bar** to another screen throws the window there; it never places it freely. (Swapping within a screen is agreed, above.)
-- (suggestion) **Dialogs and popups** float, attached to their parent window.
 - (suggestion) The limit of 4 stays per screen on large monitors too; a larger screen gives each window more room, not more windows.
+
+## Dialogs [compositor] (agreed, 2026-10-30)
+
+A **dialog** is a window that floats over the others, as on every other OS. It is **never part of the tiling**: it does not take a tile, does not count toward the four windows, and does not move the others.
+
+- **Modal or modeless.** A **modal** dialog blocks its parent: the parent is dimmed and takes no input; a click on it nudges the dialog once (a small bump, never a flash). A **modeless** dialog leaves the parent usable and stays above it.
+- **Near the window that opened it.** A dialog is centered over its parent's content, a little above center (40 % of the free room above it, 60 % below). It follows the parent when the tiling moves it, goes to the panel with it and comes back with it, and closes when the parent closes. A dialog larger than its parent extends past it, kept inside the work area.
+- **Size:** its content's optimal size, kept inside the work area with a margin.
+- **No title bar.** The compositor draws a rounded frame with a shadow; the content has its own header (title, Cancel, Done), as on phones.
+- **Layers, bottom to top:** tiled windows; **app dialogs** (the focused one on top); the panel and the top bar; the top-bar menus; **desktop dialogs**. A desktop dialog (Kuroko's own: settings pages, the password prompt) is above every app dialog.
+- **A desktop dialog without a parent** is centered on the work area. When modal, it dims everything else and blocks all other input until it closes.
+- **Keyboard:** a dialog takes the keyboard when it opens. **Esc** asks it to close (Cancel); Enter is its default button (the widgets handle it).
+- **Motion:** it appears in 180 ms, fading in and growing from 96 %, ease-out; it closes in 150 ms.
+- **Wayland:** a dialog is an `xdg_toplevel` with `set_parent`; modal through `xdg-dialog-v1` (`set_modal`). Desktop dialogs come from Kuroko's own processes (how the compositor knows a process is Kuroko's own is still open; in the simulator the backend opens them).
 
 ## Launcher [compositor]
 
@@ -496,12 +509,24 @@ All borders are 1–3 px. The bottom border carries the window's status and work
 ### Top bar (agreed)
 
 - The top bar stays, for status and quick controls only. **No app menu.**
-- From the right corner: **gear (settings)** in the corner, then **control center**, then **indicators** to their left. A corner is the easiest target on the screen.
+- **Four menu icons at the right** (agreed, 2026-10-30; replaces "gear, then control center"). From the right corner (agreed, 2026-10-30): the **date and time** in the corner, as on macOS ("Fri Oct 30  13:35"), then **settings**, **control center**, **device center**, **language**; the learning indicator to their left. A corner is the easiest target on the screen. Each icon opens its own menu under the top bar; with one open, clicking another icon switches to its menu.
+  - **Settings** controls the whole desktop. Its icon will be Kuroko's own; until there is one, a gear.
+  - **Control center** (icon: two switches), laid out like the macOS Control Center, in rounded modules:
+    - **Connections**, at the top: **Wi-Fi** and **Bluetooth**, each a row with a round button that turns it on or off (filled when on, outlined when off) and its state in words (the network's name, "2 connected", "Off"). Turning one off disconnects the devices that used it.
+    - **A chevron (›) at the end of each row** opens its details in the same panel (agreed, 2026-10-30), with a back chevron, the name and an on/off switch at the top. **Wi-Fi** lists the networks in range (signal, a padlock when secured); a click joins one, and the joined one has a check and **Disconnect**. **Bluetooth** lists its devices, each with **Connect / Disconnect**. Esc goes back, then closes.
+    - **Sound output** and **sound input:** a volume slider (click or drag), the speaker or microphone beside it mutes, and the devices listed under it; a click picks the one in use (a check mark).
+  - **Device center** (icon: a screen with a phone): the devices that are attached, grouped by how: **Bluetooth**, **USB**, **wired network** (the adapters), **shared folders** (SMB) and **remote disks**. Each row has the device's name and its state in words with a shape cue (a filled dot when connected, two bars when paused, a ring otherwise) and a chevron.
+    - **A click on a device opens its details** (agreed, 2026-10-30): its name and state, the actions **Connect / Disconnect**, **Pause / Resume** and **Disable / Enable**, which live only here, and its **properties**: facts (battery, address, capacity, where it is mounted) and switches the user can change (connect automatically, read only, reconnect at login). Which properties a device has comes from the system, not from the shell.
+    - **Paused:** still attached but not in use (a share stops syncing, a headset sleeps); Resume needs no new connection. Only a connected device pauses.
+    - A disabled device cannot connect until enabled; a device whose connection is off ("Bluetooth is off", "No network": no Wi-Fi network joined and no wired adapter connected) cannot connect either.
+  - **Language:** the icon is the current language's short code ("EN") in an outlined key. The menu lists **the user's languages**, the one in use checked; a click switches. Under them, **Edit languages…** opens the **language dialog** (agreed, 2026-10-30): a modal desktop dialog built with the widget library like any app, with a search field and every language the system offers, the user's checked. **At least one stays checked**: the last one's row is locked, and the note under the list says why. Cancel discards, Done applies; removing the language in use switches to the first one left.
 - **At the left corner: the apps button** (a 3 x 3 grid of dots), which opens the launcher. The same icon, much larger, sits at the bottom of the panel. (agreed, 2026-10-14)
-- **Every icon in the top bar is a button,** with a hover tint. In the simulator the gear and the control center open a first small panel of switches (dark mode, learning, natural scrolling for wheel and touchpad); the real control center is still to be designed.
+- **Every icon in the top bar is a button,** with a hover tint. Settings holds a first small panel of switches for now (dark mode, learning, natural scrolling for wheel and touchpad).
 - The top bar appears on every screen.
 
 ### Control center (suggestion)
+
+The control center in the top bar holds the connections and sound so far (agreed, 2026-10-30); the other groups below are still to come.
 
 Groups of up to 4, each with a main control and details one click away:
 
@@ -525,7 +550,7 @@ Groups of up to 4, each with a main control and details one click away:
 
 ### Bringing it to the pointer (agreed)
 
-- Right-clicking the desktop opens a menu whose top row holds the gear, the control center and the key indicators, so the user doesn't travel to the corner.
+- Right-clicking the desktop opens a menu whose top row holds the four menu icons (settings, control center, device center, language) and the key indicators, so the user doesn't travel to the corner.
 - (suggestion) With attention tiling the empty desktop is rarely visible, so the same row also sits at the top of the **summoned surface** (dock/launcher at the pointer), reachable by the same hotkey or gesture from anywhere.
 
 ## Lock screen and greeter [compositor]

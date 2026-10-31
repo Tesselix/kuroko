@@ -82,6 +82,16 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const languages = b.addModule("languages", .{
+        .root_source_file = b.path("apps/languages/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "txcore", .module = core },
+            .{ .name = "txwidgets", .module = widgets },
+        },
+    });
+
     // ------------------------------------------------------------ tests
 
     const test_step = b.step("test", "Run all unit tests");
@@ -94,6 +104,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "txwidgets", .module = widgets },
             .{ .name = "txcomp", .module = comp },
             .{ .name = "controls", .module = controls },
+            .{ .name = "languages", .module = languages },
         },
     });
     const apps_test = b.createModule(.{
@@ -125,7 +136,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    for ([_]*std.Build.Module{ core, widgets, comp, wl, gpu, controls, headless, stub_test, apps_test, trust_test, focus_test, icons_test }) |m| {
+    for ([_]*std.Build.Module{ core, widgets, comp, wl, gpu, controls, languages, headless, stub_test, apps_test, trust_test, focus_test, icons_test }) |m| {
         const t = b.addTest(.{ .root_module = m });
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
@@ -160,6 +171,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "txwidgets", .module = widgets },
                 .{ .name = "txcomp", .module = comp },
                 .{ .name = "controls", .module = controls },
+                .{ .name = "languages", .module = languages },
                 .{ .name = "txwl", .module = wl },
                 .{ .name = "txgl", .module = gpu },
             },

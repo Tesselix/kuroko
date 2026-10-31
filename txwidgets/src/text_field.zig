@@ -27,10 +27,16 @@ pub const Params = struct {
     placeholder: []const u8 = "",
     state: State = .read_write,
     password: bool = false,
+    /// A search field (Widget Framework, "Mobile first"): a pill with a
+    /// magnifier at the start and a clear button at the end.
+    search: bool = false,
 };
 
 pub const height = 30;
 const pad_x = 8;
+/// Room for a search field's magnifier and clear button.
+const search_lead = 28;
+pub const clear_w = 26;
 const style: font.Style = .{ .size = .body };
 
 pub const KeyResult = enum { ignored, handled, changed, submit };
@@ -72,7 +78,7 @@ pub const TextField = struct {
     pub fn measure(self: *const TextField, scale: i32) core.Size {
         const m = font.Metrics.of(style, scale);
         var w: i32 = @intFromFloat(@ceil(@as(f32, @floatFromInt(self.params.length_lt)) * m.letterWidth()));
-        w += 2 * pad_x;
+        w += self.padLeft() + self.padRight();
         if (self.params.max_px) |mx| w = @min(w, mx);
         w = @max(w, self.params.min_px);
         return .{ .w = w, .h = height };
@@ -95,10 +101,42 @@ pub const TextField = struct {
         return buf[0..n];
     }
 
+    fn padLeft(self: *const TextField) i32 {
+        return if (self.params.search) search_lead else pad_x;
+    }
+
+    fn padRight(self: *const TextField) i32 {
+        return if (self.params.search and self.buf.items.len > 0) clear_w else pad_x;
+    }
+
+    /// The clear button of a search field with text, at local x.
+    pub fn onClear(self: *const TextField, local_x: f32, w: i32) bool {
+        return self.params.search and self.buf.items.len > 0 and local_x >= @as(f32, @floatFromInt(w - clear_w));
+    }
+
     pub fn draw(self: *TextField, cv: *Canvas, r: Rect, theme: *const Theme, focused: bool) void {
         const st = self.params.state;
         const box = r;
-        switch (st) {
+        if (self.params.search) {
+            const rad: f32 = @floatFromInt(@divTrunc(box.h, 2));
+            cv.fillRoundRect(box, rad, theme.get(.surface_sunken));
+            if (focused) cv.strokeRoundRect(box.inset(-2), rad + 2, 2, theme.get(.focus_ring).withAlpha(90));
+            // The magnifier: a ring and its handle.
+            const mx: f32 = @floatFromInt(box.x + 14);
+            const my: f32 = @as(f32, @floatFromInt(box.y)) + @as(f32, @floatFromInt(box.h)) / 2 - 1;
+            const dim = theme.get(.text_dim);
+            cv.fillCircle(mx, my, 5.5, dim);
+            cv.fillCircle(mx, my, 4, theme.get(.surface_sunken));
+            cv.line(mx + 4, my + 4, mx + 7, my + 7, 1.8, dim);
+            if (self.buf.items.len > 0) {
+                // Clear: an x in a filled circle.
+                const cx: f32 = @floatFromInt(box.right() - @divTrunc(clear_w, 2));
+                cv.fillCircle(cx, my + 1, 7, dim);
+                const bg = theme.get(.surface_sunken);
+                cv.line(cx - 2.5, my - 1.5, cx + 2.5, my + 3.5, 1.5, bg);
+                cv.line(cx - 2.5, my + 3.5, cx + 2.5, my - 1.5, 1.5, bg);
+            }
+        } else switch (st) {
             .read_write => {
                 cv.fillRoundRect(box, 5, theme.get(.surface));
                 cv.strokeRoundRect(box, 5, 0, theme.get(if (focused) .accent else .border));
@@ -118,7 +156,7 @@ pub const TextField = struct {
         var dots: [256]u8 = undefined;
         const shown = self.display(&dots);
         const m = font.Metrics.of(style, cv.scale);
-        const inner = Rect{ .x = box.x + pad_x, .y = box.y, .w = box.w - 2 * pad_x, .h = box.h };
+        const inner = Rect{ .x = box.x + self.padLeft(), .y = box.y, .w = box.w - self.padLeft() - self.padRight(), .h = box.h };
         const ty: f32 = @as(f32, @floatFromInt(box.y)) + @as(f32, @floatFromInt(box.h - m.lineHeight())) / 2;
         const text_role: core.theme.Role = if (st == .disabled) .text_disabled else .text;
 
@@ -272,7 +310,7 @@ pub const TextField = struct {
     pub fn press(self: *TextField, local_x: f32, scale: i32, extend: bool) void {
         if (self.params.state == .disabled) return;
         const m = font.Metrics.of(style, scale);
-        var i = m.indexAt(self.buf.items, local_x - pad_x + self.scroll_x);
+        var i = m.indexAt(self.buf.items, local_x - @as(f32, @floatFromInt(self.padLeft())) + self.scroll_x);
         if (self.params.password) i = self.buf.items.len;
         self.moveTo(i, extend);
     }

@@ -30,6 +30,14 @@ pub const Surface = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
 
+    /// A dialog a window opens (Wayland: a new xdg_toplevel with
+    /// set_parent; modal through xdg-dialog-v1). The compositor owns the
+    /// surface from then on.
+    pub const DialogRequest = struct {
+        surface: Surface,
+        modal: bool,
+    };
+
     pub const VTable = struct {
         title: *const fn (*anyopaque) []const u8,
         app_id: *const fn (*anyopaque) []const u8,
@@ -61,7 +69,13 @@ pub const Surface = struct {
         /// in its own time (it may ask to save first); `wants_close` turns
         /// true when it is done. False: close it now.
         request_close: *const fn (*anyopaque) bool = closeNow,
+        /// A dialog the window wants opened, once; null when none.
+        take_dialog: *const fn (*anyopaque) ?DialogRequest = noDialog,
     };
+
+    fn noDialog(_: *anyopaque) ?DialogRequest {
+        return null;
+    }
 
     fn noState(_: *anyopaque, _: WindowState) void {}
     fn closeNow(_: *anyopaque) bool {
@@ -115,5 +129,8 @@ pub const Surface = struct {
     }
     pub fn requestClose(s: Surface) bool {
         return s.vtable.request_close(s.ptr);
+    }
+    pub fn takeDialog(s: Surface) ?DialogRequest {
+        return s.vtable.take_dialog(s.ptr);
     }
 };

@@ -18,6 +18,7 @@ pub const Image = draw_list.Image;
 pub const Surface = surface.Surface;
 pub const Window = window.Window;
 pub const NodeId = window.NodeId;
+pub const Kind = window.Kind;
 pub const Callback = window.Callback;
 pub const callback = window.callback;
 pub const Block = doc_view.Block;

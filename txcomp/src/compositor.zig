@@ -13,6 +13,8 @@ const tw = @import("txwidgets");
 const tiling = @import("tiling.zig");
 const chrome = @import("chrome.zig");
 const shell = @import("shell.zig");
+const menus = @import("menus.zig");
+const dlg = @import("dialogs.zig");
 const Publisher = @import("publish.zig").Publisher;
 const installed = @import("apps.zig");
 
@@ -317,6 +319,17 @@ const Drag = union(enum) {
     preview_button: struct { h: Handle, which: PreviewButton },
     /// The pointer was pressed in a window's content.
     content: Handle,
+    /// Dragging a volume slider in the control center.
+    menu_slider: menus.Dir,
+    /// The pointer was pressed in a dialog's content (its id).
+    dialog: u32,
+};
+
+/// Opens Kuroko's own dialogs by name ("languages"): the desktop service
+/// does it on Linux, the backend in the simulator.
+pub const DesktopDialogs = struct {
+    ctx: *anyopaque,
+    open: *const fn (*anyopaque, name: []const u8) ?Surface,
 };
 
 const LaunchStats = struct {
@@ -394,8 +407,24 @@ pub const Compositor = struct {
     cursor: core.input.Cursor = .arrow,
 
     launcher: shell.Launcher = .{},
-    /// The panel the gear and the control-center icon open.
-    cc: shell.ControlCenter = .{},
+    /// The menu a top-bar icon opens (settings, sound, connectivity,
+    /// language).
+    top_menu: menus.TopMenu = .{},
+    /// What the system reports for the menus: connections, sound,
+    /// devices, keyboard layouts.
+    system: menus.System = .{},
+    /// Floating dialogs (Top-Level Design, "Dialogs"); within each layer,
+    /// later ones are on top.
+    dialogs: std.ArrayList(dlg.Dialog) = .empty,
+    dialog_seq: u32 = 0,
+    /// The dialog with the keyboard, when one has it.
+    dialog_focus: ?u32 = null,
+    /// The dialog under the pointer.
+    dialog_hover: ?u32 = null,
+    desktop_dialogs: ?DesktopDialogs = null,
+    /// Dialogs asked for during a frame, opened at its end.
+    pending_dialogs: [4]struct { surface: Surface, opts: dlg.Options } = undefined,
+    pending_dialogs_len: usize = 0,
     chooser: ?Chooser = null,
     /// The panel window under the pointer, shown enlarged over the panel
     /// with buttons.
@@ -415,7 +444,8 @@ pub const Compositor = struct {
     super_down: bool = false,
     super_other: bool = false,
     learning: bool = true,
-    clock: [16]u8 = undefined,
+    /// The date and time the top bar shows ("Fri Oct 30  13:35").
+    clock: [32]u8 = undefined,
     clock_len: usize = 0,
 
     publisher: Publisher,
@@ -475,6 +505,9 @@ pub const Compositor = struct {
             self.windows.handles(&hs, gpa) catch {};
             for (hs.items) |h| self.destroyWindow(h);
         }
+        while (self.dialogs.items.len > 0) self.destroyDialog(self.dialogs.items.len - 1);
+        for (self.pending_dialogs[0..self.pending_dialogs_len]) |p| p.surface.destroy();
+        self.dialogs.deinit(gpa);
         self.windows.collect(null);
         self.windows.deinit(null);
         self.tiles.deinit(self.gpa);
@@ -505,7 +538,7 @@ pub const Compositor = struct {
         self.full_redraw = true;
     }
 
-    /// "Pause learning" (top bar, control center): the recorder stops while
+    /// "Pause learning" (top bar, settings): the recorder stops while
     /// learning is off.
     pub fn setLearning(self: *Compositor, on: bool) void {
         if (self.learning == on) return;
@@ -649,6 +682,7 @@ pub const Compositor = struct {
     }
 
     pub fn close(self: *Compositor, h: Handle, now: i64) void {
+        self.closeDialogsOf(h);
         self.publishWindow(h, .closed);
         self.keepGhost(h, now);
         removeHandle(&self.tiles, h);
@@ -1340,6 +1374,14 @@ pub const Compositor = struct {
                     if (k.pressed) self.launcherAction(self.launcher.key(self.app_infos.items, k.key, k.mods.shift), now);
                     return;
                 }
+                // A dialog with the keyboard gets it; Esc asks it to close.
+                if (self.focusedDialog()) |i| {
+                    const d = &self.dialogs.items[i];
+                    if (k.pressed and k.key == .escape) {
+                        if (!d.surface.requestClose()) self.beginCloseDialog(i, now);
+                    } else self.sendToDialog(i, ev, now);
+                    return;
+                }
                 if ((self.preview != null or self.panel_menu != null) and k.pressed and k.key == .escape) {
                     self.preview = null;
                     self.panel_menu = null;
@@ -1355,8 +1397,9 @@ pub const Compositor = struct {
                     self.full_redraw = true;
                     return;
                 }
-                if (self.cc.isOpen() and k.pressed and k.key == .escape) {
-                    self.cc.from = .none;
+                if (self.top_menu.isOpen() and k.pressed and k.key == .escape) {
+                    // From a detail view, back to the menu; else close it.
+                    if (self.top_menu.view != .main) self.top_menu.view = .main else self.top_menu = .{};
                     self.full_redraw = true;
                     return;
                 }
@@ -1366,6 +1409,10 @@ pub const Compositor = struct {
                 if (self.super_down) return;
                 if (self.launcher.open) {
                     self.launcher.text(t.slice());
+                    return;
+                }
+                if (self.focusedDialog()) |i| {
+                    self.sendToDialog(i, ev, now);
                     return;
                 }
                 if (self.focused) |f| self.sendToContent(f, ev, now);
@@ -1393,6 +1440,11 @@ pub const Compositor = struct {
                     w.band = r.band;
                     w.rate = r.rate;
                 }
+                if (self.dialogAt(self.px, self.py)) |i| {
+                    self.sendToDialog(i, .{ .wheel = w }, now);
+                    return;
+                }
+                if (self.modalBlocking(self.px, self.py, now) != null) return;
                 const h = self.activeFs() orelse self.windowAt(self.px, self.py, now) orelse return;
                 self.sendToContent(h, .{ .wheel = w }, now);
             },
@@ -1424,7 +1476,34 @@ pub const Compositor = struct {
         }
     }
 
-    fn flipSetting(self: *Compositor, row: shell.ControlCenter.Row, now: i64) void {
+    /// A press on a part of a top-bar menu.
+    fn menuPress(self: *Compositor, hit: menus.Hit, x: f32, now: i64) void {
+        const sys = &self.system;
+        switch (hit) {
+            .none => return,
+            .setting => |row| self.flipSetting(row, now),
+            .radio, .radio_switch => |r| sys.toggleRadio(r),
+            .radio_more => |r| self.top_menu.view = .{ .radio = r },
+            .back => self.top_menu.view = .main,
+            .network => |i| sys.pickNetwork(i),
+            .device => |i| self.top_menu.view = .{ .device = i },
+            .pause => |i| sys.togglePause(i),
+            .prop => |ref| sys.toggleProp(ref.dev, ref.i),
+            .mute => |dir| sys.toggleMute(dir),
+            .slider => |dir| {
+                sys.setLevel(dir, self.top_menu.sliderLevel(self.screen.w, sys, dir, x));
+                self.drag = .{ .menu_slider = dir };
+            },
+            .audio => |p| sys.pickAudio(p.dir, p.i),
+            .connect => |i| sys.toggleConnect(i),
+            .enable => |i| sys.toggleEnabled(i),
+            .layout => |i| sys.pickLayout(i),
+            .layout_edit => self.openDesktopDialog("languages", now),
+        }
+        self.full_redraw = true;
+    }
+
+    fn flipSetting(self: *Compositor, row: menus.Setting, now: i64) void {
         _ = now;
         switch (row) {
             .dark => self.setDark(!self.theme.dark),
@@ -1448,6 +1527,10 @@ pub const Compositor = struct {
             defer g.release();
             if (g.ptr.surface) |sf| sf.setDark(dark);
             g.ptr.dirty = true;
+        }
+        for (self.dialogs.items) |*d| {
+            d.surface.setDark(dark);
+            d.dirty = true;
         }
         self.full_redraw = true;
     }
@@ -2495,11 +2578,17 @@ pub const Compositor = struct {
             self.full_redraw = true;
             return;
         }
+        if (self.dialogMotion(x, y, now)) return;
         if (self.activeFs()) |fs| {
             self.fsPointerMotion(fs, x, y, now);
             return;
         }
         switch (self.drag) {
+            .menu_slider => |dir| {
+                self.system.setLevel(dir, self.top_menu.sliderLevel(self.screen.w, &self.system, dir, x));
+                self.full_redraw = true;
+                return;
+            },
             .panel => |*d| {
                 if (@abs(x - d.x) + @abs(y - d.y) > 5) {
                     d.moved = true;
@@ -2709,6 +2798,21 @@ pub const Compositor = struct {
 
     fn press(self: *Compositor, button: core.input.Button, x: f32, y: f32, now: i64) void {
         self.full_redraw = true;
+        // Dialogs float above the windows; a modal one blocks what is
+        // under it and is nudged instead.
+        if (self.dialogAt(x, y)) |i| {
+            const d = &self.dialogs.items[i];
+            self.dialog_focus = d.id;
+            self.drag = .{ .dialog = d.id };
+            self.sendToDialog(i, .{ .pointer_button = .{ .button = button, .pressed = true, .x = x, .y = y } }, now);
+            self.raiseDialog(i);
+            return;
+        }
+        if (self.modalBlocking(x, y, now)) |i| {
+            self.dialogs.items[i].nudge_start = now;
+            return;
+        }
+        self.dialog_focus = null;
         if (self.chooser != null) {
             if (button == .left) self.chooserPress(x, y, now) else self.chooser = null;
             return;
@@ -2781,16 +2885,17 @@ pub const Compositor = struct {
             return;
         }
         const top = shell.topBarHit(self.screen.w, x, y);
-        if (self.cc.isOpen()) {
-            if (self.cc.rowAt(self.screen.w, x, y)) |row| {
-                self.flipSetting(row, now);
+        if (self.top_menu.isOpen()) {
+            const hit = self.top_menu.hit(self.screen.w, &self.system, x, y);
+            if (hit != .none) {
+                self.menuPress(hit, x, now);
                 return;
             }
-            if (self.cc.rect(self.screen.w).contains(x, y)) return;
+            if (self.top_menu.rect(self.screen.w, &self.system).contains(x, y)) return;
             // A click anywhere else closes it; on the icon that opened it,
             // that is all the click does.
-            const from = self.cc.from;
-            self.cc.from = .none;
+            const from = self.top_menu.from;
+            self.top_menu = .{};
             if (top == from) return;
         }
         switch (top) {
@@ -2802,8 +2907,8 @@ pub const Compositor = struct {
                 if (button == .left) self.toggleLauncher(now);
                 return;
             },
-            .gear, .control_center => {
-                self.cc.from = top;
+            .gear, .control_center, .devices, .language => {
+                self.top_menu = .{ .from = top };
                 return;
             },
             .none => {},
@@ -2857,6 +2962,7 @@ pub const Compositor = struct {
         self.full_redraw = true;
         switch (d) {
             .content => |h| self.sendToContent(h, .{ .pointer_button = .{ .button = button, .pressed = false, .x = x, .y = y } }, now),
+            .dialog => |id| if (self.dialogIndex(id)) |i| self.sendToDialog(i, .{ .pointer_button = .{ .button = button, .pressed = false, .x = x, .y = y } }, now),
             .button => |b| {
                 // Acts on release only if the pointer is still on it.
                 const g = self.windows.acquire(b.h) orelse return;
@@ -3236,6 +3342,7 @@ pub const Compositor = struct {
                 if (w.surface) |s| {
                     if (s.tick(now)) w.dirty = true;
                     if (s.wantsClose()) to_close = h;
+                    if (s.takeDialog()) |req| self.queueDialog(req, .{ .parent = h, .modal = req.modal });
                     const ws = self.stateOf(h, w);
                     if (@as(u8, @bitCast(ws)) != w.told_state) {
                         w.told_state = @bitCast(ws);
@@ -3285,6 +3392,7 @@ pub const Compositor = struct {
         }
         if (relayout_needed) self.relayout(now, true);
         if (to_close) |h| self.close(h, now);
+        if (self.tickDialogs(now)) need = true;
         if (self.launcher.visible(now)) need = true;
         if (self.cue != null) need = true;
         if (self.ghosts.items.len > 0) need = true;
@@ -3319,6 +3427,300 @@ pub const Compositor = struct {
         self.publisher.flush();
         self.windows.collect(null);
         return need;
+    }
+
+    // ------------------------------------------------------------- dialogs
+
+    /// Opens a dialog (Top-Level Design, "Dialogs"). The compositor owns
+    /// the surface from now on, and destroys it on failure.
+    pub fn openDialog(self: *Compositor, s: Surface, opts: dlg.Options, now: i64) !u32 {
+        errdefer s.destroy();
+        self.dialog_seq += 1;
+        var d: dlg.Dialog = .{ .id = self.dialog_seq, .surface = s, .opts = opts, .open_start = now };
+        try self.sizeDialog(&d, dlg.fit(s.optimalSize(), self.workArea()));
+        errdefer self.gpa.free(d.pixels);
+        s.setDark(self.theme.dark);
+        d.rect = self.dialogPlace(&d, now) orelse .{};
+        try self.dialogs.append(self.gpa, d);
+        self.dialog_focus = d.id;
+        // A desktop dialog closes the top-bar menu that asked for it.
+        if (opts.layer == .desktop) self.top_menu = .{};
+        self.full_redraw = true;
+        return d.id;
+    }
+
+    /// Opens one of Kuroko's own dialogs by name, modal over the desktop;
+    /// when it is already open, it takes the keyboard instead.
+    pub fn openDesktopDialog(self: *Compositor, name: []const u8, now: i64) void {
+        const dd = self.desktop_dialogs orelse return;
+        const s = dd.open(dd.ctx, name) orelse return;
+        for (self.dialogs.items, 0..) |*d, i| {
+            if (d.opts.layer == .desktop and !d.closing() and std.mem.eql(u8, d.surface.appId(), s.appId())) {
+                s.destroy();
+                self.dialog_focus = d.id;
+                d.nudge_start = now;
+                self.raiseDialog(i);
+                return;
+            }
+        }
+        _ = self.openDialog(s, .{ .modal = true, .layer = .desktop }, now) catch {};
+    }
+
+    /// The system state changed from outside (a desktop dialog applied
+    /// a choice): draw again.
+    pub fn systemChanged(self: *Compositor) void {
+        self.full_redraw = true;
+    }
+
+    /// A dialog a surface asked for, opened at the next upkeep (not while
+    /// the window list is being walked).
+    fn queueDialog(self: *Compositor, req: Surface.DialogRequest, opts: dlg.Options) void {
+        if (self.pending_dialogs_len == self.pending_dialogs.len) {
+            req.surface.destroy();
+            return;
+        }
+        self.pending_dialogs[self.pending_dialogs_len] = .{ .surface = req.surface, .opts = opts };
+        self.pending_dialogs_len += 1;
+    }
+
+    fn sizeDialog(self: *Compositor, d: *dlg.Dialog, size: Size) !void {
+        const bw = size.w * self.scale;
+        const bh = size.h * self.scale;
+        d.pixels = try self.gpa.realloc(d.pixels, @intCast(bw * bh));
+        d.buf_w = bw;
+        d.buf_h = bh;
+        d.content = size;
+        self.image_seq += 1;
+        d.image_id = self.image_seq;
+        d.version = 0;
+        d.surface.configure(size, self.scale);
+        d.dirty = true;
+    }
+
+    /// Where a dialog's content goes now, or null while its parent is not
+    /// on screen (in the panel, in a full-screen space): it hides with it.
+    fn dialogPlace(self: *Compositor, d: *const dlg.Dialog, now: i64) ?Rect {
+        const area = self.workArea();
+        const ph = d.opts.parent orelse return dlg.place(d.content, null, area);
+        if (self.space != 0) return null;
+        const g = self.windows.acquire(ph) orelse return null;
+        defer g.release();
+        const w = g.ptr;
+        if (w.shelved or w.fullscreen or !w.placed) return null;
+        return dlg.place(d.content, contentRect(currentFrame(w, now)), area);
+    }
+
+    fn dialogIndex(self: *const Compositor, id: u32) ?usize {
+        for (self.dialogs.items, 0..) |d, i| {
+            if (d.id == id) return i;
+        }
+        return null;
+    }
+
+    /// The dialog with the keyboard, if it is still open and shown.
+    fn focusedDialog(self: *const Compositor) ?usize {
+        const i = self.dialogIndex(self.dialog_focus orelse return null) orelse return null;
+        const d = &self.dialogs.items[i];
+        if (d.closing() or d.rect.w == 0) return null;
+        return i;
+    }
+
+    /// The topmost dialog whose frame is at (x, y): desktop dialogs first.
+    fn dialogAt(self: *const Compositor, x: f32, y: f32) ?usize {
+        for ([_]dlg.Layer{ .desktop, .app }) |layer| {
+            var i = self.dialogs.items.len;
+            while (i > 0) {
+                i -= 1;
+                const d = &self.dialogs.items[i];
+                if (d.opts.layer != layer or d.closing() or d.rect.w == 0) continue;
+                if (d.rect.inset(-dlg.frame_pad).contains(x, y)) return i;
+            }
+        }
+        return null;
+    }
+
+    /// The modal dialog in the way of the pointer at (x, y): a modal
+    /// desktop dialog blocks everything; an app's blocks its parent.
+    fn modalBlocking(self: *Compositor, x: f32, y: f32, now: i64) ?usize {
+        var i = self.dialogs.items.len;
+        while (i > 0) {
+            i -= 1;
+            const d = &self.dialogs.items[i];
+            if (d.closing() or !d.opts.modal) continue;
+            if (d.opts.layer == .desktop and d.opts.parent == null) return i;
+            const ph = d.opts.parent orelse continue;
+            if (d.rect.w == 0) continue;
+            const g = self.windows.acquire(ph) orelse continue;
+            defer g.release();
+            if (currentFrame(g.ptr, now).contains(x, y)) return i;
+        }
+        return null;
+    }
+
+    /// Clicked: on top of its layer.
+    fn raiseDialog(self: *Compositor, i: usize) void {
+        if (i + 1 == self.dialogs.items.len) return;
+        const d = self.dialogs.orderedRemove(i);
+        self.dialogs.appendAssumeCapacity(d);
+    }
+
+    fn sendToDialog(self: *Compositor, i: usize, ev: Event, now: i64) void {
+        const d = &self.dialogs.items[i];
+        const ox: f32 = @floatFromInt(d.rect.x);
+        const oy: f32 = @floatFromInt(d.rect.y);
+        var local = ev;
+        switch (local) {
+            .pointer_motion => |*m| {
+                m.x -= ox;
+                m.y -= oy;
+            },
+            .pointer_button => |*b| {
+                b.x -= ox;
+                b.y -= oy;
+            },
+            else => {},
+        }
+        d.surface.input(local, now);
+        d.dirty = true;
+    }
+
+    /// Pointer motion over a dialog, or held in one: true when the dialog
+    /// took it. Leaving a dialog tells it so.
+    fn dialogMotion(self: *Compositor, x: f32, y: f32, now: i64) bool {
+        if (self.drag == .dialog) {
+            if (self.dialogIndex(self.drag.dialog)) |i| self.sendToDialog(i, .{ .pointer_motion = .{ .x = x, .y = y } }, now);
+            return true;
+        }
+        const at = self.dialogAt(x, y);
+        const id: ?u32 = if (at) |i| self.dialogs.items[i].id else null;
+        if (self.dialog_hover) |old| {
+            if (id != old) {
+                if (self.dialogIndex(old)) |oi| self.sendToDialog(oi, .pointer_leave, now);
+            }
+        }
+        self.dialog_hover = id;
+        const i = at orelse return false;
+        self.setContentHover(null, now);
+        self.sendToDialog(i, .{ .pointer_motion = .{ .x = x, .y = y } }, now);
+        self.cursor = self.dialogs.items[i].surface.cursor();
+        self.full_redraw = true;
+        return true;
+    }
+
+    fn beginCloseDialog(self: *Compositor, i: usize, now: i64) void {
+        const d = &self.dialogs.items[i];
+        if (d.closing()) return;
+        d.close_start = now;
+        if (self.dialog_focus == d.id) {
+            self.dialog_focus = null;
+            // The keyboard goes to the next dialog on top, if any.
+            var k = self.dialogs.items.len;
+            while (k > 0) {
+                k -= 1;
+                const o = &self.dialogs.items[k];
+                if (k != i and !o.closing() and o.rect.w > 0) {
+                    self.dialog_focus = o.id;
+                    break;
+                }
+            }
+        }
+        self.full_redraw = true;
+    }
+
+    fn destroyDialog(self: *Compositor, i: usize) void {
+        const d = self.dialogs.orderedRemove(i);
+        d.surface.destroy();
+        self.gpa.free(d.pixels);
+        if (self.dialog_focus == d.id) self.dialog_focus = null;
+        if (self.dialog_hover == d.id) self.dialog_hover = null;
+        if (self.drag == .dialog and self.drag.dialog == d.id) self.drag = .none;
+        self.full_redraw = true;
+    }
+
+    /// The window closes: its dialogs go with it, at once.
+    fn closeDialogsOf(self: *Compositor, h: Handle) void {
+        var i: usize = 0;
+        while (i < self.dialogs.items.len) {
+            const p = self.dialogs.items[i].opts.parent;
+            if (p != null and p.?.eql(h)) self.destroyDialog(i) else i += 1;
+        }
+    }
+
+    /// Each frame: dialogs asked for, the dialogs' own ticks, requests to
+    /// close, parents that are gone, and where each one is now. True
+    /// while one needs frames.
+    fn tickDialogs(self: *Compositor, now: i64) bool {
+        var need = false;
+        var q: usize = 0;
+        while (q < self.pending_dialogs_len) : (q += 1) {
+            const p = self.pending_dialogs[q];
+            _ = self.openDialog(p.surface, p.opts, now) catch {};
+            need = true;
+        }
+        self.pending_dialogs_len = 0;
+        var i: usize = 0;
+        while (i < self.dialogs.items.len) {
+            const d = &self.dialogs.items[i];
+            const orphan = if (d.opts.parent) |ph| blk: {
+                const g = self.windows.acquire(ph) orelse break :blk true;
+                g.release();
+                break :blk false;
+            } else false;
+            if (d.gone(now) or orphan) {
+                self.destroyDialog(i);
+                need = true;
+                continue;
+            }
+            if (!d.closing()) {
+                if (d.surface.tick(now)) d.dirty = true;
+                if (d.surface.wantsClose()) self.beginCloseDialog(i, now);
+                // A dialog's own dialog: over the same window, in its layer.
+                if (d.surface.takeDialog()) |req| self.queueDialog(req, .{ .parent = d.opts.parent, .modal = req.modal, .layer = d.opts.layer });
+            }
+            d.rect = self.dialogPlace(d, now) orelse .{};
+            if (d.dirty or d.animating(now)) need = true;
+            i += 1;
+        }
+        return need;
+    }
+
+    /// One layer of dialogs, each in a rounded frame with a shadow; a
+    /// modal one dims what it blocks.
+    fn drawDialogs(self: *Compositor, cv: *Canvas, layer: dlg.Layer, now: i64) void {
+        const th = &self.theme;
+        for (self.dialogs.items) |*d| {
+            if (d.opts.layer != layer) continue;
+            d.rect = self.dialogPlace(d, now) orelse .{};
+            if (d.rect.w == 0) continue;
+            const look = d.look(now);
+            if (d.opts.modal) {
+                const dim = th.get(.shadow).withAlpha(@intFromFloat(90 * look.alpha));
+                if (d.opts.parent) |ph| {
+                    if (self.windows.acquire(ph)) |g| {
+                        defer g.release();
+                        cv.fillRect(currentFrame(g.ptr, now), dim);
+                    }
+                } else cv.fillRect(self.screenRect(), dim);
+            }
+            d.paint(self.scale);
+            const r = scaleAround(d.rect, look.k);
+            const frame = r.inset(-dlg.frame_pad);
+            cv.fillRoundRect(frame.translate(0, 8), dlg.frame_radius + 2, th.get(.shadow).fade(look.alpha));
+            cv.fillRoundRect(frame, dlg.frame_radius, th.get(.surface).fade(look.alpha));
+            if (look.k == 1 and look.alpha >= 1) {
+                cv.blit(d.image(), r.x * self.scale, r.y * self.scale);
+            } else {
+                cv.blitScaled(d.image(), r, @intFromFloat(255 * look.alpha));
+            }
+            cv.strokeRoundRect(frame, dlg.frame_radius, 1, th.get(.border).fade(look.alpha));
+        }
+    }
+
+    fn scaleAround(r: Rect, k: f32) Rect {
+        if (k == 1) return r;
+        const w: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(r.w)) * k));
+        const h: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(r.h)) * k));
+        return .{ .x = r.x + @divTrunc(r.w - w, 2), .y = r.y + @divTrunc(r.h - h, 2), .w = w, .h = h };
     }
 
     // -------------------------------------------------------------- render
@@ -3371,6 +3773,7 @@ pub const Compositor = struct {
         self.drawChooser(cv);
         self.updateRunning();
         self.launcher.draw(cv, &self.theme, self.app_infos.items, now);
+        self.drawDialogs(cv, .desktop, now);
     }
 
     /// A slow frame (apps redrawing at a new size, many pixels on a HiDPI
@@ -3430,6 +3833,7 @@ pub const Compositor = struct {
             if (!sameHandle(lifted, wh)) self.drawWindow(cv, wh, now);
         }
         self.drawDividers(cv, true);
+        self.drawDialogs(cv, .app, now);
         self.drawShelf(cv, now);
         self.drawFlying(cv, now);
         self.drawPointedPulse(cv, now);
@@ -3439,9 +3843,9 @@ pub const Compositor = struct {
 
         const hint = "Apps or Super: launcher   +X close   +Z minimize   +Enter maximize   +F full screen   +\u{2190}/\u{2192} spaces";
         const hover = if (self.drag == .none) shell.topBarHit(self.screen.w, self.px, self.py) else .none;
-        shell.drawTopBar(cv, th, self.screen.w, self.clock[0..self.clock_len], self.learning, hint, hover, self.launcher.open, self.cc.from);
+        shell.drawTopBar(cv, th, self.screen.w, self.clock[0..self.clock_len], self.learning, self.system.layoutCode(), hint, hover, self.launcher.open, self.top_menu.from);
         self.drawSpaceDots(cv, false, now);
-        self.cc.draw(cv, th, self.screen.w, .{ self.theme.dark, self.learning, self.params.wheel_natural, self.params.touchpad_natural }, self.px, self.py);
+        self.top_menu.draw(cv, th, self.screen.w, &self.system, .{ self.theme.dark, self.learning, self.params.wheel_natural, self.params.touchpad_natural }, self.px, self.py);
     }
 
     /// A full-screen window: its content fills `r` (the screen, or a

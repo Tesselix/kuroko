@@ -27,6 +27,7 @@ const core = @import("txcore");
 const tw = @import("txwidgets");
 const txcomp = @import("txcomp");
 const controls = @import("controls");
+const languages = @import("languages");
 const txwl = @import("txwl");
 const txgl = @import("txgl");
 const builtin = @import("builtin");
@@ -251,7 +252,11 @@ fn clockText(buf: []u8) []const u8 {
     const t = c.time(null);
     var tm: c.Tm = undefined;
     _ = c.localtime_r(&t, &tm) orelse return "";
-    return std.fmt.bufPrint(buf, "{d:0>2}:{d:0>2}", .{ @as(u32, @intCast(tm.hour)), @as(u32, @intCast(tm.min)) }) catch "";
+    const days = [_][]const u8{ "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+    const months = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+    const wd: usize = @intCast(tm.wday);
+    const mo: usize = @intCast(tm.mon);
+    return std.fmt.bufPrint(buf, "{s} {s} {d}  {d:0>2}:{d:0>2}", .{ days[wd % 7], months[mo % 12], @as(u32, @intCast(tm.mday)), @as(u32, @intCast(tm.hour)), @as(u32, @intCast(tm.min)) }) catch "";
 }
 
 fn writePpm(io: std.Io, path: []const u8, s: *const Screen) !void {
@@ -332,29 +337,139 @@ fn keyStep(t: i64, k: core.input.Key, pressed: bool) Step {
     return .{ .t = t, .ev = .{ .key = .{ .key = k, .pressed = pressed, .mods = .{} } } };
 }
 
+/// What the top-bar menus show in the simulator, standing in for the
+/// desktop service (NetworkManager, BlueZ, PipeWire, udev, GVfs on Linux).
+fn sampleSystem() txcomp.menus.System {
+    const menus = txcomp.menus;
+    var s: menus.System = .{};
+    s.radios.set(.wifi, .{ .on = true });
+    s.radios.set(.bluetooth, .{ .on = true });
+    s.addNetwork(.{ .name = .of("Home-5G"), .signal = 3 });
+    s.addNetwork(.{ .name = .of("Home-2.4G"), .signal = 2 });
+    s.addNetwork(.{ .name = .of("Neighbors"), .signal = 1 });
+    s.addNetwork(.{ .name = .of("Cafe Guest"), .signal = 2, .secured = false });
+    s.network = 0;
+    s.addAudio(.output, "MacBook Speakers");
+    s.addAudio(.output, "AirPods Pro");
+    s.addAudio(.output, "HDMI Display");
+    s.addAudio(.input, "MacBook Microphone");
+    s.addAudio(.input, "AirPods Pro");
+    s.audio.getPtr(.input).level = 0.5;
+
+    var d: menus.Device = .{ .kind = .bluetooth, .name = .of("AirPods Pro"), .state = .connected };
+    d.info("Battery", "82%");
+    d.info("Address", "4C:B9:10:2E:7A:01");
+    d.toggle("Connect automatically", true);
+    d.toggle("Use as microphone", true);
+    s.addDevice(d);
+    d = .{ .kind = .bluetooth, .name = .of("MX Keys"), .state = .connected };
+    d.info("Battery", "45%");
+    d.info("Address", "D1:22:6F:90:0B:3C");
+    d.toggle("Connect automatically", true);
+    s.addDevice(d);
+    d = .{ .kind = .bluetooth, .name = .of("Pixel 9") };
+    d.info("Address", "A8:3E:0E:51:C4:77");
+    d.toggle("Connect automatically", false);
+    s.addDevice(d);
+    d = .{ .kind = .usb, .name = .of("SanDisk Extreme 1 TB"), .state = .connected };
+    d.info("Capacity", "1 TB, 412 GB free");
+    d.info("Mounted at", "/media/sanddisk");
+    d.info("Speed", "USB 3.2, 10 Gb/s");
+    d.toggle("Read only", false);
+    d.toggle("Open when attached", true);
+    s.addDevice(d);
+    d = .{ .kind = .wired, .name = .of("USB Ethernet (en7)") };
+    d.info("Speed", "1 Gb/s");
+    d.info("MAC address", "00:E0:4C:68:12:9A");
+    d.toggle("Connect automatically", true);
+    s.addDevice(d);
+    d = .{ .kind = .share, .name = .of("smb://nas.local/projects"), .state = .connected };
+    d.info("Server", "nas.local");
+    d.info("Mounted at", "/mnt/projects");
+    d.toggle("Reconnect at login", true);
+    d.toggle("Read only", false);
+    s.addDevice(d);
+    d = .{ .kind = .share, .name = .of("smb://nas.local/media") };
+    d.info("Server", "nas.local");
+    d.toggle("Reconnect at login", false);
+    s.addDevice(d);
+    d = .{ .kind = .remote_disk, .name = .of("backup (sftp)"), .state = .disabled };
+    d.info("Server", "backup.example.org");
+    d.info("Path", "/srv/backup");
+    d.toggle("Reconnect at login", false);
+    s.addDevice(d);
+    s.offerLayout("HE", "Hebrew", true);
+    s.offerLayout("RU", "Russian", false);
+    s.offerLayout("AR", "Arabic", false);
+    s.offerLayout("FR", "French", false);
+    s.offerLayout("DE", "German", false);
+    s.offerLayout("ES", "Spanish", false);
+    return s;
+}
+
+/// Kuroko's own dialogs, which txdesk opens on Linux. Here the simulator
+/// stands in: it hands the dialog the system's state and applies what
+/// the dialog returns.
+fn openDesktopDialog(ctx: *anyopaque, name: []const u8) ?tw.Surface {
+    const comp: *txcomp.Compositor = @ptrCast(@alignCast(ctx));
+    if (!std.mem.eql(u8, name, "languages")) return null;
+    var list: [languages.max]languages.Language = undefined;
+    const sys = &comp.system;
+    const n = @min(sys.layouts_len, list.len);
+    for (sys.layouts[0..n], list[0..n]) |*l, *out| out.* = .{ .code = l.code.get(), .name = l.name.get(), .on = l.added };
+    return languages.create(comp.gpa, list[0..n], .{ .ctx = comp, .func = applyLanguages }) catch null;
+}
+
+fn applyLanguages(ctx: *anyopaque, on: []const bool) void {
+    const comp: *txcomp.Compositor = @ptrCast(@alignCast(ctx));
+    comp.system.setLanguages(on);
+    comp.systemChanged();
+}
+
+/// A click on the top-bar icon at `x`; the pointer then rests over its menu.
+fn topMenuSteps(x: f32) [3]Step {
+    return .{
+        .{ .t = 1700, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = x, .y = 14 } } },
+        .{ .t = 1710, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = x, .y = 14 } } },
+        motion(1800, 1300, 82),
+    };
+}
+
 fn script(name: []const u8) struct { steps: []const Step, end: i64 } {
     const S = struct {
         const default = [_]Step{};
         const map = [_]Step{
             motion(1700, 1000, 500),
-            wheelStep(1750, 1), wheelStep(1800, 1), wheelStep(1830, 1), wheelStep(1860, 1),
-            wheelStep(1890, 1), wheelStep(1920, 1), wheelStep(1950, 1), wheelStep(1980, 1),
-            motion(2600, 1430, 400), motion(2610, 1431, 402),
+            wheelStep(1750, 1),
+            wheelStep(1800, 1),
+            wheelStep(1830, 1),
+            wheelStep(1860, 1),
+            wheelStep(1890, 1),
+            wheelStep(1920, 1),
+            wheelStep(1950, 1),
+            wheelStep(1980, 1),
+            motion(2600, 1430, 400),
+            motion(2610, 1431, 402),
             motion(3000, 1360, 520),
         };
         const launcher = [_]Step{
             motion(1700, 700, 450),
-            keyStep(1800, .super, true), keyStep(1850, .super, false),
+            keyStep(1800, .super, true),
+            keyStep(1850, .super, false),
         };
         const drag = [_]Step{
             motion(1700, 697, 460),
             .{ .t = 1750, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 697, .y = 460 } } },
-            motion(1800, 650, 460), motion(1850, 600, 460), motion(1900, 560, 460),
+            motion(1800, 650, 460),
+            motion(1850, 600, 460),
+            motion(1900, 560, 460),
         };
         const swap = [_]Step{
             motion(1700, 1250, 43),
             .{ .t = 1750, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 1250, .y = 43 } } },
-            motion(1800, 900, 200), motion(1850, 500, 300), motion(1900, 350, 320),
+            motion(1800, 900, 200),
+            motion(1850, 500, 300),
+            motion(1900, 350, 320),
         };
         const minimize = [_]Step{
             motion(1700, 300, 700),
@@ -363,28 +478,38 @@ fn script(name: []const u8) struct { steps: []const Step, end: i64 } {
             keyStep(1800, .super, true),
             .{ .t = 1810, .ev = .{ .key = .{ .key = .z, .pressed = true, .mods = .{ .super = true } } } },
             keyStep(1820, .super, false),
+            .{ .t = 2200, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 505, .y = 875 } } },
+            .{ .t = 2210, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 505, .y = 875 } } },
+            motion(2300, 1200, 600),
         };
         const maximize = [_]Step{
             keyStep(1800, .super, true),
             .{ .t = 1810, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{ .super = true } } } },
             keyStep(1820, .super, false),
+            .{ .t = 2200, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 505, .y = 875 } } },
+            .{ .t = 2210, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 505, .y = 875 } } },
+            motion(2300, 1200, 600),
         };
         const fullscreen = [_]Step{
             keyStep(1800, .super, true),
             .{ .t = 1810, .ev = .{ .key = .{ .key = .f, .pressed = true, .mods = .{ .super = true } } } },
             keyStep(1820, .super, false),
-            motion(2200, 700, 1), motion(2300, 120, 15),
+            motion(2200, 700, 1),
+            motion(2300, 120, 15),
         };
         const panel_drag = [_]Step{
             motion(1700, 38, 95),
             .{ .t = 1720, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 38, .y = 95 } } },
-            motion(1800, 300, 300), motion(1900, 500, 420), motion(2000, 560, 450),
+            motion(1800, 300, 300),
+            motion(1900, 500, 420),
+            motion(2000, 560, 450),
         };
         const restore_icon = [_]Step{
             keyStep(1800, .super, true),
             .{ .t = 1810, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{ .super = true } } } },
             keyStep(1820, .super, false),
-            motion(2100, 230, 44), motion(2150, 232, 44),
+            motion(2100, 230, 44),
+            motion(2150, 232, 44),
         };
         const apps_button = [_]Step{
             motion(1700, 16, 14),
@@ -396,10 +521,40 @@ fn script(name: []const u8) struct { steps: []const Step, end: i64 } {
             .{ .t = 320, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 28, .y = 868 } } },
             .{ .t = 340, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 28, .y = 868 } } },
         };
-        const control_center = [_]Step{
-            .{ .t = 1700, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 1390, .y = 14 } } },
-            .{ .t = 1710, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 1390, .y = 14 } } },
-            motion(1800, 1300, 82),
+        // The top-bar menus: settings (gear), control center, device
+        // center, language.
+        const settings = topMenuSteps(1292);
+        const control_center = topMenuSteps(1260);
+        const devices = topMenuSteps(1228);
+        // The chevron at the end of the Wi-Fi row, then the first device.
+        const wifi_detail = topMenuSteps(1260) ++ [_]Step{
+            .{ .t = 1900, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 1400, .y = 68 } } },
+            .{ .t = 1910, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 1400, .y = 68 } } },
+            motion(1950, 1300, 190),
+        };
+        const device_detail = topMenuSteps(1228) ++ [_]Step{
+            .{ .t = 1900, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 1200, .y = 120 } } },
+            .{ .t = 1910, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 1200, .y = 120 } } },
+            motion(1950, 1300, 400),
+        };
+        const language = topMenuSteps(1196);
+        // Controls maximized (click its title, Super+Enter), then its
+        // "Modal dialog" button: an app's dialog over its window.
+        const app_dialog = [_]Step{
+            .{ .t = 1700, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 1100, .y = 479 } } },
+            .{ .t = 1710, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 1100, .y = 479 } } },
+            keyStep(1800, .super, true),
+            .{ .t = 1810, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{ .super = true } } } },
+            keyStep(1820, .super, false),
+            .{ .t = 2200, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 505, .y = 875 } } },
+            .{ .t = 2210, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 505, .y = 875 } } },
+            motion(2300, 1200, 600),
+        };
+        // "Edit languages…", under the two languages added: the dialog.
+        const languages_dialog = topMenuSteps(1196) ++ [_]Step{
+            .{ .t = 1900, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 1250, .y = 182 } } },
+            .{ .t = 1910, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 1250, .y = 182 } } },
+            motion(1950, 1300, 400),
         };
         const buttons = [_]Step{
             motion(1700, 250, 50), motion(1750, 252, 52),
@@ -407,27 +562,23 @@ fn script(name: []const u8) struct { steps: []const Step, end: i64 } {
         // Super, "notes", Shift+Enter: a second Notes window; then Super,
         // "notes", Enter: the chooser for the two.
         const chooser = [_]Step{
-            keyStep(1700, .super, true),                                             keyStep(1710, .super, false),
-            .{ .t = 1800, .ev = .{ .text = core.input.Text.from("notes") } },
-            .{ .t = 1850, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{ .shift = true } } } },
-            keyStep(3000, .super, true),                                             keyStep(3010, .super, false),
-            .{ .t = 3100, .ev = .{ .text = core.input.Text.from("notes") } },
-            .{ .t = 3150, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{} } } },
+            keyStep(1700, .super, true),                                      keyStep(1710, .super, false),
+            .{ .t = 1800, .ev = .{ .text = core.input.Text.from("notes") } }, .{ .t = 1850, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{ .shift = true } } } },
+            keyStep(3000, .super, true),                                      keyStep(3010, .super, false),
+            .{ .t = 3100, .ev = .{ .text = core.input.Text.from("notes") } }, .{ .t = 3150, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{} } } },
             motion(3300, 700, 300),
         };
         // Super, "reader", Enter: the outline travels from the icon.
         const cue = [_]Step{
-            keyStep(1700, .super, true),                                             keyStep(1710, .super, false),
-            .{ .t = 1800, .ev = .{ .text = core.input.Text.from("reader") } },
-            .{ .t = 1850, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{} } } },
+            keyStep(1700, .super, true),                                       keyStep(1710, .super, false),
+            .{ .t = 1800, .ev = .{ .text = core.input.Text.from("reader") } }, .{ .t = 1850, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{} } } },
         };
         const preview = [_]Step{
             motion(1700, 38, 95), motion(1800, 45, 80), motion(1900, 57, 60), motion(1950, 57, 59),
         };
         const preview_restore = [_]Step{
-            motion(1700, 38, 95), motion(1900, 57, 60), motion(1950, 57, 59),
-            .{ .t = 2000, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 57, .y = 59 } } },
-            .{ .t = 2010, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 57, .y = 59 } } },
+            motion(1700, 38, 95),                                                                                 motion(1900, 57, 60),                                                                                  motion(1950, 57, 59),
+            .{ .t = 2000, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 57, .y = 59 } } }, .{ .t = 2010, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 57, .y = 59 } } },
         };
         const close = [_]Step{
             motion(1700, 300, 700),
@@ -436,6 +587,9 @@ fn script(name: []const u8) struct { steps: []const Step, end: i64 } {
             keyStep(1800, .super, true),
             .{ .t = 1810, .ev = .{ .key = .{ .key = .x, .pressed = true, .mods = .{ .super = true } } } },
             keyStep(1820, .super, false),
+            .{ .t = 2200, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 505, .y = 875 } } },
+            .{ .t = 2210, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 505, .y = 875 } } },
+            motion(2300, 1200, 600),
         };
         const menu_title = [_]Step{
             motion(1700, 400, 52), motion(1750, 402, 52),
@@ -450,23 +604,19 @@ fn script(name: []const u8) struct { steps: []const Step, end: i64 } {
         };
         // Super, then rest on Notes: its "+" badge shows; click it.
         const new_window = [_]Step{
-            keyStep(1700, .super, true),                                             keyStep(1710, .super, false),
-            motion(1800, 760, 270), motion(1850, 762, 270),
-            .{ .t = 2000, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 809, .y = 241 } } },
-            .{ .t = 2010, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 809, .y = 241 } } },
+            keyStep(1700, .super, true),                                                                            keyStep(1710, .super, false),
+            motion(1800, 760, 270),                                                                                 motion(1850, 762, 270),
+            .{ .t = 2000, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 809, .y = 241 } } }, .{ .t = 2010, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 809, .y = 241 } } },
         };
         // Two more Notes windows (Shift+Enter in the launcher), minimize
         // all, then rest on the Notes group in the panel.
         const group = [_]Step{
-            keyStep(1700, .super, true),                                             keyStep(1710, .super, false),
-            .{ .t = 1750, .ev = .{ .text = core.input.Text.from("notes") } },
-            .{ .t = 1800, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{ .shift = true } } } },
-            keyStep(2100, .super, true),                                             keyStep(2110, .super, false),
-            .{ .t = 2150, .ev = .{ .text = core.input.Text.from("notes") } },
-            .{ .t = 2200, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{ .shift = true } } } },
-            .{ .t = 2800, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 20, .y = 50 } } },
-            .{ .t = 2810, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 20, .y = 50 } } },
-            motion(3300, 38, 260), motion(3350, 38, 262),
+            keyStep(1700, .super, true),                                                                          keyStep(1710, .super, false),
+            .{ .t = 1750, .ev = .{ .text = core.input.Text.from("notes") } },                                     .{ .t = 1800, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{ .shift = true } } } },
+            keyStep(2100, .super, true),                                                                          keyStep(2110, .super, false),
+            .{ .t = 2150, .ev = .{ .text = core.input.Text.from("notes") } },                                     .{ .t = 2200, .ev = .{ .key = .{ .key = .enter, .pressed = true, .mods = .{ .shift = true } } } },
+            .{ .t = 2800, .ev = .{ .pointer_button = .{ .button = .left, .pressed = true, .x = 20, .y = 50 } } }, .{ .t = 2810, .ev = .{ .pointer_button = .{ .button = .left, .pressed = false, .x = 20, .y = 50 } } },
+            motion(3300, 38, 260),                                                                                motion(3350, 38, 262),
         };
         const group_menu = group ++ [_]Step{
             .{ .t = 3500, .ev = .{ .pointer_button = .{ .button = .right, .pressed = true, .x = 38, .y = 262 } } },
@@ -492,7 +642,14 @@ fn script(name: []const u8) struct { steps: []const Step, end: i64 } {
     if (std.mem.eql(u8, name, "restore_icon")) return .{ .steps = &S.restore_icon, .end = 2500 };
     if (std.mem.eql(u8, name, "apps_button")) return .{ .steps = &S.apps_button, .end = 2200 };
     if (std.mem.eql(u8, name, "apps_panel")) return .{ .steps = &S.apps_panel, .end = 900 };
+    if (std.mem.eql(u8, name, "settings")) return .{ .steps = &S.settings, .end = 2100 };
     if (std.mem.eql(u8, name, "control_center")) return .{ .steps = &S.control_center, .end = 2100 };
+    if (std.mem.eql(u8, name, "devices")) return .{ .steps = &S.devices, .end = 2100 };
+    if (std.mem.eql(u8, name, "wifi_detail")) return .{ .steps = &S.wifi_detail, .end = 2100 };
+    if (std.mem.eql(u8, name, "device_detail")) return .{ .steps = &S.device_detail, .end = 2100 };
+    if (std.mem.eql(u8, name, "language")) return .{ .steps = &S.language, .end = 2100 };
+    if (std.mem.eql(u8, name, "app_dialog")) return .{ .steps = &S.app_dialog, .end = 2700 };
+    if (std.mem.eql(u8, name, "languages")) return .{ .steps = &S.languages_dialog, .end = 2300 };
     if (std.mem.eql(u8, name, "buttons")) return .{ .steps = &S.buttons, .end = 2100 };
     if (std.mem.eql(u8, name, "chooser")) return .{ .steps = &S.chooser, .end = 3500 };
     if (std.mem.eql(u8, name, "cue")) return .{ .steps = &S.cue, .end = 1990 };
@@ -601,7 +758,11 @@ pub fn main(init: std.process.Init) !void {
     std.log.info("SDL video driver {s}, renderer {s}, window {d}x{d} (pixels {d}x{d}, scale {d})", .{
         c.SDL_GetCurrentVideoDriver() orelse "?",
         if (renderer) |r| c.SDL_GetRendererName(r) orelse "?" else "txgl (" ++ "GPU" ++ ")",
-        screen.lw, screen.lh, screen.pw, screen.ph, screen.scale,
+        screen.lw,
+        screen.lh,
+        screen.pw,
+        screen.ph,
+        screen.scale,
     });
     // Render calls that fail are reported (a few times), not ignored: on a
     // new backend a failing present leaves the screen blank without a word.
@@ -612,6 +773,8 @@ pub fn main(init: std.process.Init) !void {
 
     const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = screen.lw, .h = screen.lh }, screen.scale, .{ .dark = opts.dark });
     defer comp.deinit();
+    comp.system = sampleSystem();
+    comp.desktop_dialogs = .{ .ctx = comp, .open = openDesktopDialog };
     if (opts.tiled or opts.snapshot != null) {
         // Three growable windows (Scroll Lab, Notes, Reader) and two small
         // ones (Controls, Stopwatch). Four fit on a screen; the least
@@ -677,7 +840,7 @@ pub fn main(init: std.process.Init) !void {
 
     const sc = script(opts.script);
     var step_i: usize = 0;
-    var clock_buf: [16]u8 = undefined;
+    var clock_buf: [32]u8 = undefined;
     var need = true;
     var running = true;
 

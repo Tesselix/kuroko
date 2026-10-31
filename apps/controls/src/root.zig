@@ -5,7 +5,8 @@
 //! Five windows, to exercise the window behavior with three growable and
 //! two small fixed-size apps:
 //!  - Controls     buttons, toggles, checkboxes, progress, text fields,
-//!                 window status, hover enlargement (fixed size)
+//!                 window status, hover enlargement, grouped lists and
+//!                 dialogs (fixed size)
 //!  - Scroll Lab   the document view: wheel bands, map, markers, back
 //!  - Notes        a second document, takes any size (growable)
 //!  - Reader       a third document, takes any size (growable)
@@ -56,6 +57,14 @@ const Controls = struct {
         if (std.mem.eql(u8, label, "Progress")) win.setStatus(.progress, 0.6);
         if (std.mem.eql(u8, label, "Working")) win.setStatus(.working, 0);
         if (std.mem.eql(u8, label, "Error")) win.setStatus(.failed, 0);
+    }
+
+    fn onModal(self: *Controls, win: *Window, _: NodeId) void {
+        win.openDialog(createSampleDialog(self.gpa, true) catch return, true);
+    }
+
+    fn onModeless(self: *Controls, win: *Window, _: NodeId) void {
+        win.openDialog(createSampleDialog(self.gpa, false) catch return, false);
     }
 
     fn onSubmit(self: *Controls, win: *Window, id: NodeId) void {
@@ -169,6 +178,49 @@ pub fn createControls(gpa: std.mem.Allocator) !tw.Surface {
         }
         _ = try win.label(c, "Error is red and dashed, with an icon in the title bar", .{ .style = .{ .size = .small }, .role = .text_dim });
     }
+    // Grouped lists and dialogs (Widget Framework, "Mobile first").
+    {
+        const c = try card(win, right, "LISTS AND DIALOGS");
+        const l = try win.list(c, .{ .footer = "A click flips a check mark or a switch" });
+        _ = try win.listRow(l, "English", .{ .badge = "EN", .accessory = .check, .toggles = true, .on = true });
+        _ = try win.listRow(l, "Airplane mode", .{ .accessory = .toggle, .toggles = true });
+        _ = try win.listRow(l, "Wallpaper", .{ .subtitle = "Calm gradient", .accessory = .chevron, .on_click = tw.callback(app, Controls.onButton) });
+        const r = try win.row(c, .{ .spacing = 8 });
+        _ = try win.button(r, "Modal dialog", .{ .on_click = tw.callback(app, Controls.onModal) });
+        _ = try win.button(r, "Modeless dialog", .{ .on_click = tw.callback(app, Controls.onModeless) });
+    }
+    return win.surface();
+}
+
+/// A dialog in the phone style: a header bar with Cancel and Done, a
+/// search field and a grouped list in a scroll area.
+fn createSampleDialog(gpa: std.mem.Allocator, modal: bool) !tw.Surface {
+    const win = try Window.create(gpa, .{
+        .title = if (modal) "Modal dialog" else "Modeless dialog",
+        .app_id = "org.kuroko.controls.dialog",
+        .optimal = .{ .w = 360, .h = 0 },
+        .background = .surface_alt,
+    });
+    errdefer win.destroy();
+    const Close = struct {
+        fn f(_: *Window, w: *Window, _: NodeId) void {
+            w.requestClose();
+        }
+    };
+    const root = try win.column(null, .{ .spacing = 0 });
+    _ = try win.headerBar(root, .{
+        .title = if (modal) "Modal dialog" else "Modeless dialog",
+        .leading = "Cancel",
+        .trailing = "Done",
+        .on_leading = tw.callback(win, Close.f),
+        .on_trailing = tw.callback(win, Close.f),
+    });
+    const body = try win.scrollArea(root, 360, .{ .padding = 16, .spacing = 18 });
+    _ = try win.label(body, if (modal) "The window under it waits until this closes." else "The window under it stays usable.", .{ .style = .{ .size = .small }, .role = .text_dim });
+    const l = try win.list(body, .{ .header = "OPTIONS", .footer = "Esc cancels; Enter is Done" });
+    for ([_][]const u8{ "Show previews", "Sort by name", "Group by kind", "Remember this choice" }, 0..) |name, i| {
+        _ = try win.listRow(l, name, .{ .accessory = .check, .toggles = true, .on = i % 2 == 0 });
+    }
     return win.surface();
 }
 
@@ -203,15 +255,16 @@ const ScrollLab = struct {
 };
 
 const words = [_][]const u8{
-    "window", "layout", "screen", "focus",   "attention", "reading", "pointer", "scroll",  "content", "habit",
-    "glance", "context", "desktop", "memory", "prediction", "line", "page", "section", "border", "status",
-    "calm", "quick", "steady", "simple",   "visible",  "stable", "small", "large", "near", "far",
-    "the", "a", "of", "and", "to", "in", "is", "with", "for", "on", "that", "as", "it", "by", "every", "each",
+    "window", "layout",  "screen",  "focus",  "attention",  "reading", "pointer", "scroll",  "content", "habit",
+    "glance", "context", "desktop", "memory", "prediction", "line",    "page",    "section", "border",  "status",
+    "calm",   "quick",   "steady",  "simple", "visible",    "stable",  "small",   "large",   "near",    "far",
+    "the",    "a",       "of",      "and",    "to",         "in",      "is",      "with",    "for",     "on",
+    "that",   "as",      "it",      "by",     "every",      "each",
 };
 
 const topics = [_][]const u8{
-    "Reading width", "Attention tiling", "Speed bands", "The document map", "Footprints", "Screen time",
-    "Viewport marker", "Center marker", "Jumping back", "Stable positions", "Shift to run", "Hover enlargement",
+    "Reading width",   "Attention tiling", "Speed bands",  "The document map", "Footprints",   "Screen time",
+    "Viewport marker", "Center marker",    "Jumping back", "Stable positions", "Shift to run", "Hover enlargement",
 };
 
 fn sentence(gpa: std.mem.Allocator, rng: std.Random, list: *std.ArrayList([]u8), n_sent: usize) ![]u8 {

@@ -7,6 +7,7 @@ const core = @import("txcore");
 const tw = @import("txwidgets");
 const txcomp = @import("txcomp");
 const controls = @import("controls");
+const languages = @import("languages");
 
 const ms = std.time.ns_per_ms;
 
@@ -262,7 +263,7 @@ test "the apps button at the bottom of the panel opens the launcher" {
     try std.testing.expect(comp.launcher.open);
 }
 
-test "the control-center icon opens switches that work" {
+test "the gear opens switches that work" {
     const gpa = std.testing.allocator;
     const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
     defer comp.deinit();
@@ -274,15 +275,83 @@ test "the control-center icon opens switches that work" {
         }
     }.at;
     _ = now;
-    click(comp, 1440 - 50, 14);
-    try std.testing.expect(comp.cc.isOpen());
+    click(comp, @floatFromInt(txcomp.shell.topBarRect(1440, .gear).x + 16), 14);
+    try std.testing.expect(comp.top_menu.from == .gear);
     // First row: dark mode.
-    const r = comp.cc.rect(1440);
+    const r = comp.top_menu.rect(1440, &comp.system);
     click(comp, @floatFromInt(r.x + 40), @floatFromInt(r.y + 44 + 20));
     try std.testing.expect(comp.theme.dark);
     // A click elsewhere closes it.
     click(comp, 700, 500);
-    try std.testing.expect(!comp.cc.isOpen());
+    try std.testing.expect(!comp.top_menu.isOpen());
+}
+
+test "the four top-bar icons, right to left, each open their own menu" {
+    const gpa = std.testing.allocator;
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+    const click = struct {
+        fn at(cp: *txcomp.Compositor, x: f32, y: f32) void {
+            cp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = true, .x = x, .y = y } }, 0);
+            cp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = false, .x = x, .y = y } }, 0);
+        }
+    }.at;
+    const order = [_]txcomp.shell.TopBarHit{ .gear, .control_center, .devices, .language };
+    var prev_x: i32 = 1440;
+    for (order) |which| {
+        const r = txcomp.shell.topBarRect(1440, which);
+        try std.testing.expect(r.right() <= prev_x);
+        prev_x = r.x;
+        const cx: f32 = @floatFromInt(r.x + @divTrunc(r.w, 2));
+        click(comp, cx, 14);
+        try std.testing.expectEqual(which, comp.top_menu.from);
+        // A second click on the same icon closes its menu.
+        click(comp, cx, 14);
+        try std.testing.expect(!comp.top_menu.isOpen());
+    }
+    // One menu open, another icon clicked: that icon's menu replaces it.
+    click(comp, @floatFromInt(txcomp.shell.topBarRect(1440, .control_center).x + 16), 14);
+    click(comp, @floatFromInt(txcomp.shell.topBarRect(1440, .language).x + 16), 14);
+    try std.testing.expectEqual(.language, comp.top_menu.from);
+}
+
+test "control center turns Wi-Fi on; the device center connects a device" {
+    const gpa = std.testing.allocator;
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+    const click = struct {
+        fn at(cp: *txcomp.Compositor, x: f32, y: f32) void {
+            cp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = true, .x = x, .y = y } }, 0);
+            cp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = false, .x = x, .y = y } }, 0);
+        }
+    }.at;
+    comp.system.addDevice(.{ .kind = .usb, .name = .of("Drive") });
+    click(comp, @floatFromInt(txcomp.shell.topBarRect(1440, .control_center).x + 16), 14);
+    var r = comp.top_menu.rect(1440, &comp.system);
+    // The first row of the connections module: Wi-Fi.
+    click(comp, @floatFromInt(r.x + 60), @floatFromInt(r.y + 12 + 4 + 23));
+    try std.testing.expect(comp.system.radios.get(.wifi).on);
+    try std.testing.expectEqual(.control_center, comp.top_menu.from);
+
+    click(comp, @floatFromInt(txcomp.shell.topBarRect(1440, .devices).x + 16), 14);
+    r = comp.top_menu.rect(1440, &comp.system);
+    // The device's row opens its details, which hold the buttons.
+    click(comp, @floatFromInt(r.x + 60), @floatFromInt(r.y + 40 + 26 + 20));
+    try std.testing.expectEqual(txcomp.menus.View{ .device = 0 }, comp.top_menu.view);
+    r = comp.top_menu.rect(1440, &comp.system);
+    // Search the device row for its connect button.
+    const hit: [2]i32 = found: {
+        var y: i32 = r.y;
+        while (y < r.bottom()) : (y += 2) {
+            var x: i32 = r.x;
+            while (x < r.right()) : (x += 4) {
+                if (comp.top_menu.hit(1440, &comp.system, @floatFromInt(x), @floatFromInt(y)) == .connect) break :found .{ x, y };
+            }
+        }
+        return error.NoConnectButton;
+    };
+    click(comp, @floatFromInt(hit[0]), @floatFromInt(hit[1]));
+    try std.testing.expectEqual(txcomp.menus.DeviceState.connected, comp.system.devices[0].state);
 }
 
 test "launcher: a running app is brought up; two windows open the chooser" {
@@ -924,4 +993,172 @@ test "an installed app shows its icon from txdesk's icons file" {
 
 test {
     _ = @import("keycodes.zig");
+}
+
+/// A small dialog built with the widget library: a line of text and a
+/// button that closes it.
+fn testDialog(gpa: std.mem.Allocator) !tw.Surface {
+    const win = try tw.Window.create(gpa, .{ .title = "Dialog", .app_id = "test.dialog", .optimal = .{ .w = 0, .h = 0 } });
+    errdefer win.destroy();
+    const col = try win.column(null, .{ .padding = 16 });
+    _ = try win.label(col, "Are you sure?", .{});
+    const Close = struct {
+        fn f(_: *tw.Window, w: *tw.Window, _: tw.NodeId) void {
+            w.requestClose();
+        }
+    };
+    _ = try win.button(col, "OK", .{ .primary = true, .on_click = tw.callback(win, Close.f) });
+    return win.surface();
+}
+
+fn runFrames(comp: *txcomp.Compositor, cv: *tw.Canvas, now: *i64, n: usize) void {
+    for (0..n) |_| {
+        now.* += 16 * ms;
+        _ = comp.tick(now.*);
+        comp.render(cv, now.*);
+    }
+}
+
+fn clickAt(comp: *txcomp.Compositor, x: f32, y: f32, now: i64) void {
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = true, .x = x, .y = y } }, now);
+    comp.handleInput(.{ .pointer_button = .{ .button = .left, .pressed = false, .x = x, .y = y } }, now);
+}
+
+test "a modal dialog floats over its parent, blocks it, and closes with it" {
+    const gpa = std.testing.allocator;
+    const px = try gpa.alloc(u32, 1440 * 900);
+    defer gpa.free(px);
+    var cv = tw.Canvas.init(px, 1440, 900, 1440, 1);
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+    var now: i64 = 0;
+    const h = try comp.launch(2, now);
+    runFrames(comp, &cv, &now, 30);
+    const tiled = comp.counts().tiled;
+
+    _ = try comp.openDialog(try testDialog(gpa), .{ .parent = h, .modal = true }, now);
+    runFrames(comp, &cv, &now, 20);
+    // Not tiled: the window count is unchanged.
+    try std.testing.expectEqual(tiled, comp.counts().tiled);
+    const r = comp.dialogs.items[0].rect;
+    try std.testing.expect(r.w > 0);
+    // The lone window fills the work area: the dialog is centered on it.
+    const area_mid = 76 + @divTrunc(1440 - 76, 2);
+    try std.testing.expect(@abs(r.x + @divTrunc(r.w, 2) - area_mid) <= 1);
+
+    // A click on the parent, outside the dialog, is blocked: a nudge.
+    clickAt(comp, 200, 600, now);
+    try std.testing.expect(comp.dialogs.items[0].nudge_start == now);
+    try std.testing.expectEqual(@as(usize, 1), comp.dialogs.items.len);
+
+    // Esc closes it (after its closing motion).
+    comp.handleInput(.{ .key = .{ .key = .escape, .pressed = true, .mods = .{} } }, now);
+    runFrames(comp, &cv, &now, 20);
+    try std.testing.expectEqual(@as(usize, 0), comp.dialogs.items.len);
+
+    // Opened again, then the parent closes: the dialog goes with it.
+    _ = try comp.openDialog(try testDialog(gpa), .{ .parent = h, .modal = false }, now);
+    runFrames(comp, &cv, &now, 5);
+    comp.close(h, now);
+    runFrames(comp, &cv, &now, 2);
+    try std.testing.expectEqual(@as(usize, 0), comp.dialogs.items.len);
+}
+
+test "a dialog's button closes it; a modal desktop dialog blocks every window" {
+    const gpa = std.testing.allocator;
+    const px = try gpa.alloc(u32, 1440 * 900);
+    defer gpa.free(px);
+    var cv = tw.Canvas.init(px, 1440, 900, 1440, 1);
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+    var now: i64 = 0;
+    _ = try comp.launch(2, now);
+    runFrames(comp, &cv, &now, 30);
+
+    _ = try comp.openDialog(try testDialog(gpa), .{ .modal = true, .layer = .desktop }, now);
+    runFrames(comp, &cv, &now, 20);
+    // The top bar is blocked too: the gear does not open its menu.
+    const gear = txcomp.shell.topBarRect(1440, .gear);
+    clickAt(comp, @floatFromInt(gear.x + 16), 14, now);
+    try std.testing.expect(!comp.top_menu.isOpen());
+    try std.testing.expect(comp.dialogs.items[0].nudge_start == now);
+
+    // The OK button: find it by scanning the dialog for a press that
+    // closes it.
+    const r = comp.dialogs.items[0].rect;
+    var y = r.bottom() - 4;
+    while (y > r.y and comp.dialogs.items.len > 0 and !comp.dialogs.items[0].closing()) : (y -= 3) {
+        clickAt(comp, @floatFromInt(r.x + 30), @floatFromInt(y), now);
+        runFrames(comp, &cv, &now, 1);
+    }
+    runFrames(comp, &cv, &now, 20);
+    try std.testing.expectEqual(@as(usize, 0), comp.dialogs.items.len);
+    // Unblocked again.
+    clickAt(comp, @floatFromInt(gear.x + 16), 14, now);
+    try std.testing.expect(comp.top_menu.isOpen());
+}
+
+fn openLanguages(ctx: *anyopaque, name: []const u8) ?tw.Surface {
+    const comp: *txcomp.Compositor = @ptrCast(@alignCast(ctx));
+    if (!std.mem.eql(u8, name, "languages")) return null;
+    var list: [languages.max]languages.Language = undefined;
+    const sys = &comp.system;
+    const n = @min(sys.layouts_len, list.len);
+    for (sys.layouts[0..n], list[0..n]) |*l, *out| out.* = .{ .code = l.code.get(), .name = l.name.get(), .on = l.added };
+    return languages.create(comp.gpa, list[0..n], .{ .ctx = comp, .func = struct {
+        fn f(c: *anyopaque, on: []const bool) void {
+            const cp: *txcomp.Compositor = @ptrCast(@alignCast(c));
+            cp.system.setLanguages(on);
+        }
+    }.f }) catch null;
+}
+
+test "Edit languages opens the language dialog over everything; Done applies it" {
+    const gpa = std.testing.allocator;
+    const px = try gpa.alloc(u32, 1440 * 900);
+    defer gpa.free(px);
+    var cv = tw.Canvas.init(px, 1440, 900, 1440, 1);
+    const comp = try txcomp.Compositor.init(gpa, &apps, .{ .w = 1440, .h = 900 }, 1, .{});
+    defer comp.deinit();
+    comp.desktop_dialogs = .{ .ctx = comp, .open = openLanguages };
+    comp.system.offerLayout("HE", "Hebrew", false);
+    var now: i64 = 0;
+    _ = try comp.launch(2, now);
+    runFrames(comp, &cv, &now, 30);
+
+    // The language menu, then its last row: Edit languages.
+    clickAt(comp, @floatFromInt(txcomp.shell.topBarRect(1440, .language).x + 16), 14, now);
+    const m = comp.top_menu.rect(1440, &comp.system);
+    clickAt(comp, @floatFromInt(m.x + 60), @floatFromInt(m.bottom() - 12 - 20), now);
+    runFrames(comp, &cv, &now, 20);
+    try std.testing.expectEqual(@as(usize, 1), comp.dialogs.items.len);
+    const d = &comp.dialogs.items[0];
+    try std.testing.expectEqual(txcomp.dialogs.Layer.desktop, d.opts.layer);
+    try std.testing.expect(d.opts.modal);
+    // The menu closed when the dialog opened.
+    try std.testing.expect(!comp.top_menu.isOpen());
+    // Asking again does not open a second one.
+    comp.openDesktopDialog("languages", now);
+    try std.testing.expectEqual(@as(usize, 1), comp.dialogs.items.len);
+
+    // Check Hebrew, then Done: clicks at their places in the dialog.
+    const win: *tw.Window = @ptrCast(@alignCast(d.surface.ptr));
+    const at = struct {
+        fn f(w: *tw.Window, kind: tw.Kind, text: []const u8) core.Rect {
+            for (w.nodes.items) |n| {
+                if (n.kind == kind and std.mem.eql(u8, n.text, text)) return n.rect;
+            }
+            return .{};
+        }
+    }.f;
+    const dr = d.rect;
+    const he = at(win, .list_row, "Hebrew");
+    clickAt(comp, @floatFromInt(dr.x + he.x + 40), @floatFromInt(dr.y + he.y + 10), now);
+    runFrames(comp, &cv, &now, 2);
+    try std.testing.expect(!comp.system.layouts[1].added); // not before Done
+    const done = at(win, .button, "Done");
+    clickAt(comp, @floatFromInt(comp.dialogs.items[0].rect.x + done.x + 10), @floatFromInt(comp.dialogs.items[0].rect.y + done.y + 10), now);
+    runFrames(comp, &cv, &now, 20);
+    try std.testing.expectEqual(@as(usize, 0), comp.dialogs.items.len);
+    try std.testing.expect(comp.system.layouts[1].added);
 }
